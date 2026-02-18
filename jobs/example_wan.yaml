@@ -1,0 +1,16 @@
+job_name: example-wan
+model:
+  id: wan22_ti2v_5b
+  version: TODO_WAN22_VERSION
+output_root: outputs
+dry_run: true
+global_params:
+  guidance_scale: 6.0
+shots:
+  - prompt: "A drone shot over snowy mountains in the morning."
+    duration_seconds: 2.0
+    steps: 30
+    fps: 12
+    seed: 1101
+    width: 768
+    height: 432

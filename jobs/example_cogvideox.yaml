@@ -1,0 +1,16 @@
+job_name: example-cogvideox
+model:
+  id: cogvideox15_5b_i2v
+  version: TODO_COGVIDEOX15_VERSION
+output_root: outputs
+dry_run: true
+global_params:
+  guidance_scale: 5.0
+shots:
+  - prompt: "A cozy cafe interior with rain on the window."
+    duration_seconds: 2.0
+    steps: 26
+    fps: 12
+    seed: 3301
+    width: 768
+    height: 432

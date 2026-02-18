@@ -1,0 +1,32 @@
+job_name: example-mock
+model:
+  id: mock
+  version: MOCK_V1
+output_root: outputs
+dry_run: false
+global_params:
+  guidance_scale: 5.0
+  sampler: euler
+shots:
+  - prompt: "A cinematic sunrise over a glass city skyline."
+    duration_seconds: 1.5
+    steps: 12
+    fps: 10
+    seed: 101
+    width: 512
+    height: 320
+  - prompt: "The camera glides between towers with golden reflections."
+    duration_seconds: 1.5
+    steps: 12
+    fps: 10
+    seed: 102
+    width: 512
+    height: 320
+  - prompt: "A wide reveal of the city plaza with moving shadows."
+    duration_seconds: 1.5
+    steps: 12
+    fps: 10
+    seed: 103
+    width: 512
+    height: 320
+

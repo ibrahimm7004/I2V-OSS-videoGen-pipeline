@@ -1,0 +1,16 @@
+job_name: example-hunyuan
+model:
+  id: hunyuan_i2v
+  version: TODO_HUNYUAN_VERSION
+output_root: outputs
+dry_run: true
+global_params:
+  guidance_scale: 5.5
+shots:
+  - prompt: "A forest path with drifting mist and warm light rays."
+    duration_seconds: 2.0
+    steps: 28
+    fps: 12
+    seed: 2201
+    width: 768
+    height: 432

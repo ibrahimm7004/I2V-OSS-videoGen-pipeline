@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-gen-test-pipeline"
+version = "0.1.0"
+description = "Open-source scaffold for local/Vast.ai video generation test pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.7,<3",
+  "PyYAML>=6.0,<7",
+  "rich>=13.7,<15",
+  "python-dotenv>=1.0,<2",
+  "huggingface_hub>=0.24,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pipeline*", "models*"]
