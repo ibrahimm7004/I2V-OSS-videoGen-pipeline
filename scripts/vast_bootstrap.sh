@@ -34,7 +34,7 @@ fi
 
 python - <<'PY'
 import importlib
-mods = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "PIL", "imageio"]
+mods = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "PIL", "imageio", "imageio_ffmpeg"]
 missing = []
 for name in mods:
     try:
@@ -43,7 +43,8 @@ for name in mods:
         missing.append(name)
 if missing:
     raise SystemExit(f"Missing runtime packages after bootstrap: {', '.join(missing)}")
-print("WAN runtime packages OK.")
+from diffusers import CogVideoXImageToVideoPipeline, WanImageToVideoPipeline  # noqa: F401
+print("WAN/CogVideoX runtime packages OK.")
 PY
 
 FFMPEG_LOCAL="${REPO_ROOT}/ffmpeg/bin/ffmpeg"

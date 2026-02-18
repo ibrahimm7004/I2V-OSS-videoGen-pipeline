@@ -11,3 +11,4 @@ accelerate>=1.0,<2
 safetensors>=0.4,<1
 Pillow>=10,<12
 imageio>=2.34,<3
+imageio-ffmpeg>=0.5,<1

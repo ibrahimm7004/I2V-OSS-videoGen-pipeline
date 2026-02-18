@@ -28,6 +28,8 @@ MODEL_SELECTORS: dict[str, list[str]] = {
     "wan": ["wan22_ti2v_5b"],
     "hunyuan": ["hunyuan_i2v"],
     "cog": ["cogvideox15_5b_i2v"],
+    "cogvideox15": ["cogvideox15_5b_i2v"],
+    "cogvideox": ["cogvideox15_5b_i2v"],
 }
 
 

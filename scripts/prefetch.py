@@ -179,7 +179,11 @@ def _print_registry_self_test() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Download-only Hugging Face prefetch stage.")
-    parser.add_argument("--models", choices=["all", "wan", "hunyuan", "cog"], default="all")
+    parser.add_argument(
+        "--models",
+        choices=["all", "wan", "hunyuan", "cog", "cogvideox", "cogvideox15"],
+        default="all",
+    )
     parser.add_argument("--cache-dir", type=Path, default=None, help="Optional cache directory override.")
     parser.add_argument("--smoke", action="store_true", help="Run short smoke prefetch and stop.")
     parser.add_argument("--smoke-seconds", type=int, default=20, help="Smoke window in seconds (default: 20).")

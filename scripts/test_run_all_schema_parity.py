@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -43,6 +44,9 @@ def main() -> int:
     parser.add_argument("--jobs", nargs="+", default=_default_jobs(), help="Job-pack YAMLs.")
     args = parser.parse_args()
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = Path("outputs") / f"_schema_parity_{timestamp}"
+
     verify_cmd = [sys.executable, "scripts/verify_jobpacks.py", "--jobs", *args.jobs]
     verify_result = _run(verify_cmd)
     if verify_result.returncode != 0:
@@ -57,7 +61,7 @@ def main() -> int:
         "--jobs",
         *args.jobs,
         "--out",
-        "outputs",
+        str(out_dir),
         "--stop-on-fail",
         "--dry-run",
     ]
