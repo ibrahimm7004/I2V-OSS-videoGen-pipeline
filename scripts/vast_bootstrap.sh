@@ -20,6 +20,32 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
+if ! python - <<'PY'
+import importlib.util
+import sys
+if importlib.util.find_spec("torch") is None:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+then
+  echo "PyTorch not found. Installing CUDA wheels (cu124)..."
+  python -m pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
+fi
+
+python - <<'PY'
+import importlib
+mods = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "PIL", "imageio"]
+missing = []
+for name in mods:
+    try:
+        importlib.import_module(name)
+    except Exception:
+        missing.append(name)
+if missing:
+    raise SystemExit(f"Missing runtime packages after bootstrap: {', '.join(missing)}")
+print("WAN runtime packages OK.")
+PY
+
 FFMPEG_LOCAL="${REPO_ROOT}/ffmpeg/bin/ffmpeg"
 FFPROBE_LOCAL="${REPO_ROOT}/ffmpeg/bin/ffprobe"
 

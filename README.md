@@ -1,7 +1,7 @@
 # I2V OSS Video-Gen Test Pipeline
 
 Lightweight Python scaffold for deterministic, job-spec-driven video-gen testing.
-No Docker, no heavy model inference code yet.
+No Docker; WAN 2.2 TI2V adapter is implemented, while other model adapters remain stubs.
 
 ## What This Includes
 
@@ -14,10 +14,10 @@ No Docker, no heavy model inference code yet.
   - Guardrails:
     - Abort if any clip exceeds 10 minutes
     - Abort if total wall time exceeds `planned_clip_count * 10 minutes`
-- Model adapter interface + stubs for:
-  - `wan22_ti2v_5b`
-  - `hunyuan_i2v`
-  - `cogvideox15_5b_i2v`
+- Model adapter interface with:
+  - `wan22_ti2v_5b` implemented (Diffusers WAN I2V)
+  - `hunyuan_i2v` stub
+  - `cogvideox15_5b_i2v` stub
 - Deterministic `mock` adapter for dry runs (creates dummy MP4 quickly).
 - Stitching stub with deterministic concat placeholder.
 - Bundling utility to create one archive per run.
@@ -99,6 +99,12 @@ Optional cache override:
 
 ```powershell
 python scripts\prefetch.py --models hunyuan --cache-dir D:\hf-cache --dry-run
+```
+
+WAN-only full prefetch for runtime weights/components:
+
+```powershell
+python scripts\prefetch.py --models wan
 ```
 
 ## Commands
@@ -280,10 +286,17 @@ Expected artifacts:
 - `status/stdout.log` (when using `scripts/remote_run.sh`)
 - `final_stitched.mp4`
 
+## WAN Adapter Smoke (Vast)
+
+```bash
+python scripts/prefetch.py --models wan
+python scripts/smoke_adapter_wan22.py --input-image assets/idea01/ref_01.png --out-dir outputs/_adapter_smoke/wan22
+```
+
 ## Notes
 
-- Real model inference is intentionally not implemented in this scaffold.
-- Adapter files contain TODO placeholders for integration.
+- WAN 2.2 TI2V inference is implemented.
+- Hunyuan and CogVideoX adapter files still contain TODO placeholders.
 - `manifest.json` records `HF_HOME` and `HF_HUB_CACHE` values from environment/config.
 - `progress.log` format is: `ISO8601 | stage | clip=<index|-> | msg=...`
 - Full deployment runbook: `docs/vast_runbook.md`

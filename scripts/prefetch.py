@@ -136,8 +136,13 @@ def _run_snapshot_smoke(repo: HFRepoSpec, cache_dir: Path | None, timeout_second
 
 def _selected_repos(model_selector: str) -> list[tuple[str, HFRepoSpec]]:
     repos: list[tuple[str, HFRepoSpec]] = []
+    seen: set[tuple[str, str | None]] = set()
     for model_id in model_ids_for_selector(model_selector):
         for repo in repos_for_model_id(model_id):
+            key = (repo.repo_id, repo.revision)
+            if key in seen:
+                continue
+            seen.add(key)
             repos.append((model_id, repo))
     return repos
 

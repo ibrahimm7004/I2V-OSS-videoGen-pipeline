@@ -12,6 +12,8 @@ class HFRepoSpec:
 MODEL_REPO_REGISTRY: dict[str, list[HFRepoSpec]] = {
     "wan22_ti2v_5b": [
         HFRepoSpec(repo_id="Wan-AI/Wan2.2-TI2V-5B"),
+        # Diffusers-format weights used by the runtime adapter.
+        HFRepoSpec(repo_id="Wan-AI/Wan2.2-TI2V-5B-Diffusers"),
     ],
     "hunyuan_i2v": [
         HFRepoSpec(repo_id="tencent/HunyuanVideo-I2V"),
