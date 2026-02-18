@@ -70,6 +70,10 @@ def main() -> int:
 
     out_root = args.out.resolve()
     out_root.mkdir(parents=True, exist_ok=True)
+    model_id_override = args.model_id_override
+    if args.dry_run is True and model_id_override is None:
+        model_id_override = "mock"
+        print("dry-run enabled; forcing model_id=mock")
 
     jobs = [Path(item) for item in (args.jobs if args.jobs is not None else _default_jobs())]
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -106,7 +110,7 @@ def main() -> int:
             runtime_job, source_kind, _ = load_runtime_job_payload(
                 resolved_job,
                 output_root_override=str(out_root),
-                model_id_override=args.model_id_override,
+                model_id_override=model_id_override,
                 dry_run_override=args.dry_run,
                 fast_mode=bool(args.dry_run),
             )

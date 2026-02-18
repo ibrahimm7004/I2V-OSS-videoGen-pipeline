@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,6 +30,14 @@ def _default_jobs() -> list[str]:
     ]
 
 
+def _extract_manifest_path(output: str) -> Path:
+    prefix = "run_all manifest:"
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return Path(line[len(prefix) :].strip())
+    raise RuntimeError("run_all did not print manifest path.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Regression check: verify_jobpacks and run_all share job-pack schema loading.")
     parser.add_argument("--jobs", nargs="+", default=_default_jobs(), help="Job-pack YAMLs.")
@@ -48,8 +59,6 @@ def main() -> int:
         "--out",
         "outputs",
         "--stop-on-fail",
-        "--model-id-override",
-        "mock",
         "--dry-run",
     ]
     run_all_result = _run(run_all_cmd)
@@ -62,6 +71,53 @@ def main() -> int:
         print("run_all failed")
         print(combined_output)
         return 1
+    if "dry-run enabled; forcing model_id=mock" not in run_all_result.stdout:
+        print("run_all dry-run did not announce automatic mock model override")
+        print(combined_output)
+        return 1
+    if "adapter is a scaffold stub" in combined_output:
+        print("run_all dry-run still attempted non-mock adapter")
+        print(combined_output)
+        return 1
+
+    try:
+        manifest_path = _extract_manifest_path(run_all_result.stdout)
+    except Exception as exc:
+        print(f"failed to parse run_all manifest path: {exc}")
+        print(combined_output)
+        return 1
+    if not manifest_path.exists():
+        print(f"run_all manifest not found: {manifest_path}")
+        return 1
+
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if int(manifest_data.get("failed_jobs", -1)) != 0:
+        print("run_all dry-run reported failed jobs")
+        print(json.dumps(manifest_data, indent=2))
+        return 1
+    runs = manifest_data.get("runs") or []
+    if len(runs) != len(args.jobs):
+        print(f"run_all dry-run expected {len(args.jobs)} runs, got {len(runs)}")
+        return 1
+    for item in runs:
+        if item.get("status") != "completed":
+            print("run_all dry-run has non-completed run record")
+            print(json.dumps(item, indent=2))
+            return 1
+        runtime_job_path = item.get("runtime_job_path")
+        if not isinstance(runtime_job_path, str):
+            print("missing runtime_job_path in run record")
+            print(json.dumps(item, indent=2))
+            return 1
+        runtime_path = Path(runtime_job_path)
+        if not runtime_path.exists():
+            print(f"runtime job file missing: {runtime_path}")
+            return 1
+        runtime_payload = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
+        model_id = ((runtime_payload.get("model") or {}).get("id")) if isinstance(runtime_payload, dict) else None
+        if model_id != "mock":
+            print(f"runtime job model.id is not mock: {runtime_path} -> {model_id}")
+            return 1
 
     print("Schema parity check passed.")
     return 0
