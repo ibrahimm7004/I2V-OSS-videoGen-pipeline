@@ -16,6 +16,10 @@ try:
     from scripts.ffmpeg_check import run_ffmpeg_check
 except ModuleNotFoundError:
     from ffmpeg_check import run_ffmpeg_check
+try:
+    from scripts.validate_run import validate_run_directory
+except ModuleNotFoundError:
+    from validate_run import validate_run_directory
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -32,15 +36,30 @@ def _resolve_artifact(run_dir: Path, path_value: str | None) -> Path | None:
     return run_dir / path
 
 
+def _resolve_job_arg(job_arg: Path | None) -> Path:
+    if job_arg is not None:
+        return job_arg
+    candidates = [Path("jobs/example_mock.yaml"), Path("jobs/idea03_cogvideox.yaml")]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    fallback = sorted(Path("jobs").glob("*.yaml"))
+    if fallback:
+        return fallback[0]
+    raise RuntimeError("No job YAML found under jobs/. Provide --job explicitly.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a no-pytest scaffold self-check with schema validation.")
-    parser.add_argument("--job", type=Path, default=Path("jobs/example_mock.yaml"))
+    parser.add_argument("--job", type=Path, default=None)
     parser.add_argument("--with-ffmpeg", action="store_true", help="Also run ffmpeg/ffprobe validation.")
+    parser.add_argument("--validate-run", action="store_true", help="Run full run validation checks at the end.")
     args = parser.parse_args()
 
+    job_path = _resolve_job_arg(args.job)
     run_id = "self-check-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = run_job(
-        args.job,
+        job_path,
         overrides={
             "run_id": run_id,
             "model.id": "mock",
@@ -77,7 +96,9 @@ def main() -> None:
         _assert(bool(log_entry.last_frame_sha256), f"Clip {clip_index} missing frame hash.")
 
     if args.with_ffmpeg:
-        run_ffmpeg_check(run_dir=run_dir, job=args.job)
+        run_ffmpeg_check(run_dir=run_dir, job=job_path)
+    if args.validate_run:
+        validate_run_directory(run_dir)
 
     print(f"Self-check passed. Run dir: {run_dir}")
 

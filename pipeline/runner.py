@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,10 @@ from .timeouts import TimeoutGuard, planned_total_timeout_seconds
 from .utils import generate_run_id, load_structured_file, parse_overrides, set_by_dot_path, utc_now_iso
 
 
+class UserAbortError(RuntimeError):
+    pass
+
+
 def _split_overrides(overrides: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     config_overrides: dict[str, Any] = {}
     job_overrides: dict[str, Any] = {}
@@ -30,6 +35,55 @@ def _split_overrides(overrides: dict[str, Any]) -> tuple[dict[str, Any], dict[st
         else:
             job_overrides[key] = value
     return config_overrides, job_overrides
+
+
+def _read_control_action(status_dir: Path) -> str | None:
+    if (status_dir / "STOP").exists():
+        return "stop"
+
+    action: str | None = None
+    control_json = status_dir / "control.json"
+    if control_json.exists():
+        try:
+            payload = json.loads(control_json.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                raw = payload.get("action")
+                if isinstance(raw, str):
+                    action = raw.strip().lower()
+        except Exception:
+            action = None
+
+    if action == "stop":
+        return "stop"
+    if (status_dir / "PAUSE").exists():
+        return "pause"
+    if action == "pause":
+        return "pause"
+    return action
+
+
+def _control_gate(
+    *,
+    status_dir: Path,
+    progress: ProgressTracker,
+    clip_index: int | None,
+    percent: float,
+    context: str,
+) -> None:
+    paused_logged = False
+    while True:
+        action = _read_control_action(status_dir)
+        if action == "stop":
+            raise UserAbortError(f"User requested stop ({context}).")
+        if action == "pause":
+            if not paused_logged:
+                progress.update(clip_index, "paused", percent, f"Paused by user ({context}).")
+                paused_logged = True
+            time.sleep(2.0)
+            continue
+        if paused_logged:
+            progress.update(clip_index, "resumed", percent, f"Resumed ({context}).")
+        return
 
 
 def _display_path(path: Path | None, base: Path) -> str | None:
@@ -177,6 +231,7 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
 
     run_paths = prepare_run_directories(output_root, run_id)
     progress = ProgressTracker(run_paths.run_dir)
+    status_dir = progress.status_dir
 
     per_clip_timeout = MAX_GUARDRAIL_SECONDS
     total_timeout = planned_total_timeout_seconds(job.planned_clip_count)
@@ -209,12 +264,33 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
     completed_clips = 0
     failure_exception: Exception | None = None
     aborted_timeout = False
+    aborted_user = False
     abort_reason: str | None = None
 
     try:
         for clip_index, shot in enumerate(job.shots):
+            progress_percent = (clip_index / max(1, job.planned_clip_count)) * 85.0
             try:
+                _control_gate(
+                    status_dir=status_dir,
+                    progress=progress,
+                    clip_index=clip_index,
+                    percent=progress_percent,
+                    context=f"before clip {clip_index}",
+                )
                 guard.check_total()
+            except UserAbortError as exc:
+                aborted_user = True
+                abort_reason = str(exc)
+                progress.update(clip_index, "aborted_user", 100.0, abort_reason)
+                _write_skipped_logs(
+                    start_index=clip_index,
+                    job=job,
+                    run_paths=run_paths,
+                    manifest=manifest,
+                    reason=abort_reason,
+                )
+                break
             except TimeoutError as exc:
                 aborted_timeout = True
                 abort_reason = str(exc)
@@ -228,8 +304,12 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 )
                 break
 
-            progress_percent = (clip_index / max(1, job.planned_clip_count)) * 85.0
-            progress.update(clip_index, "clip_start", progress_percent, "Generating clip.")
+            progress.update(
+                clip_index,
+                "generating_clip_start",
+                progress_percent,
+                f"generating clip {clip_index} start",
+            )
 
             clip_started = guard.start_clip()
             clip_started_at = utc_now_iso()
@@ -280,9 +360,22 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 )
                 result = adapter.generate_clip(request)
                 guard.check_clip(clip_started, clip_index)
+                _control_gate(
+                    status_dir=status_dir,
+                    progress=progress,
+                    clip_index=clip_index,
+                    percent=progress_percent,
+                    context=f"after clip {clip_index} generation",
+                )
 
                 remaining_for_extract = int(
                     max(1, min(guard.remaining_clip_seconds(clip_started), guard.remaining_total_seconds()))
+                )
+                progress.update(
+                    clip_index,
+                    "extracting_last_frame",
+                    progress_percent,
+                    f"extracting last frame {clip_index}",
                 )
                 extract_last_frame(
                     result.output_video_path,
@@ -308,7 +401,35 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 clip_paths.append(result.output_video_path)
                 completed_clips += 1
                 progress_percent = ((clip_index + 1) / max(1, job.planned_clip_count)) * 85.0
-                progress.update(clip_index, "clip_done", progress_percent, "Clip completed.")
+                progress.update(
+                    clip_index,
+                    "generating_clip_done",
+                    progress_percent,
+                    f"generating clip {clip_index} done",
+                )
+            except UserAbortError as exc:
+                log_payload["ended_at"] = utc_now_iso()
+                log_payload["runtime_sec"] = max(0.0, time.monotonic() - clip_started)
+                log_payload["input_image_sha256"] = hash_file(input_image) if input_image else None
+                log_payload["output_clip_sha256"] = hash_file(clip_output)
+                log_payload["last_frame_sha256"] = hash_file(last_frame_output)
+                log_payload["status"] = "failed"
+                log_payload["error"] = str(exc)
+                validated_log = ClipLogSchema.model_validate(log_payload).model_dump()
+                write_clip_log(clip_log_path, validated_log)
+                manifest["clips"].append(_manifest_clip_summary(validated_log))
+
+                aborted_user = True
+                abort_reason = str(exc)
+                progress.update(clip_index, "aborted_user", 100.0, abort_reason)
+                _write_skipped_logs(
+                    start_index=clip_index + 1,
+                    job=job,
+                    run_paths=run_paths,
+                    manifest=manifest,
+                    reason=abort_reason,
+                )
+                break
             except TimeoutError as exc:
                 log_payload["ended_at"] = utc_now_iso()
                 log_payload["runtime_sec"] = max(0.0, time.monotonic() - clip_started)
@@ -350,20 +471,41 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
         final_stitched_path: str | None = None
         bundle_path: str | None = None
 
-        if not aborted_timeout and failure_exception is None:
-            progress.update(None, "stitching", 90.0, "Stitching clips.")
-            guard.check_total()
-            final_video_path = run_paths.run_dir / "final_stitched.mp4"
-            stitch_timeout = int(max(1, guard.remaining_total_seconds()))
-            stitch_clips_deterministic(
-                clip_paths,
-                final_video_path,
-                ffmpeg_bin=config.ffmpeg_bin,
-                timeout_seconds=stitch_timeout,
-            )
-            final_stitched_path = _display_path(final_video_path, run_paths.run_dir)
-            archive_path = run_paths.run_dir / f"{run_paths.run_dir.name}_bundle.zip"
-            bundle_path = _display_path(archive_path, run_paths.run_dir)
+        if not aborted_timeout and not aborted_user and failure_exception is None:
+            try:
+                _control_gate(
+                    status_dir=status_dir,
+                    progress=progress,
+                    clip_index=None,
+                    percent=90.0,
+                    context="before stitching",
+                )
+                progress.update(None, "stitching_start", 90.0, "stitching start")
+                guard.check_total()
+                final_video_path = run_paths.run_dir / "final_stitched.mp4"
+                stitch_timeout = int(max(1, guard.remaining_total_seconds()))
+                stitch_clips_deterministic(
+                    clip_paths,
+                    final_video_path,
+                    ffmpeg_bin=config.ffmpeg_bin,
+                    timeout_seconds=stitch_timeout,
+                )
+                final_stitched_path = _display_path(final_video_path, run_paths.run_dir)
+                progress.update(None, "stitching_done", 95.0, "stitching done")
+
+                _control_gate(
+                    status_dir=status_dir,
+                    progress=progress,
+                    clip_index=None,
+                    percent=96.0,
+                    context="before bundling",
+                )
+                archive_path = run_paths.run_dir / f"{run_paths.run_dir.name}_bundle.zip"
+                bundle_path = _display_path(archive_path, run_paths.run_dir)
+                progress.update(None, "bundling_start", 96.0, "bundling start")
+            except UserAbortError as exc:
+                aborted_user = True
+                abort_reason = str(exc)
 
         manifest["completed_clips"] = completed_clips
         manifest["total_runtime_sec"] = max(0.0, time.monotonic() - run_started)
@@ -371,7 +513,11 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
             "final_stitched_path": final_stitched_path,
             "bundle_path": bundle_path,
         }
-        if aborted_timeout:
+        if aborted_user:
+            manifest["status"] = "aborted_user"
+            manifest["error"] = abort_reason
+            progress.update(None, "complete", 100.0, "Run aborted by user.")
+        elif aborted_timeout:
             manifest["status"] = "aborted_timeout"
             manifest["error"] = abort_reason
             progress.update(None, "complete", 100.0, "Run aborted due to timeout.")
@@ -382,7 +528,6 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
         else:
             manifest["status"] = "completed"
             manifest["error"] = None
-            progress.update(None, "complete", 100.0, "Run complete.")
 
         write_manifest(run_paths.run_dir, manifest)
         if manifest["status"] == "completed":
@@ -390,6 +535,15 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 run_paths.run_dir,
                 archive_path=run_paths.run_dir / f"{run_paths.run_dir.name}_bundle.zip",
                 fmt="zip",
+            )
+            progress.update(None, "bundling_done", 99.0, "bundling done")
+        if manifest["status"] == "completed":
+            progress.update(
+                None,
+                "bundle_ready",
+                100.0,
+                "bundle ready",
+                extra={"bundle_path": manifest["outputs"]["bundle_path"]},
             )
 
         if failure_exception is not None:

@@ -49,13 +49,40 @@ def _remote_tail_file(user: str, host: str, key_path: Path, remote_file: str, li
     return output
 
 
-def _format_status_one_line(status_payload: dict) -> str:
+def _extract_bundle_path(status_payload: dict) -> str | None:
+    bundle_path = status_payload.get("bundle_path")
+    if isinstance(bundle_path, str) and bundle_path:
+        return bundle_path
+    outputs = status_payload.get("outputs")
+    if isinstance(outputs, dict):
+        nested = outputs.get("bundle_path")
+        if isinstance(nested, str) and nested:
+            return nested
+    return None
+
+
+def format_status_one_line(status_payload: dict) -> str:
     timestamp = status_payload.get("timestamp", "-")
     stage = status_payload.get("stage", "-")
     clip = status_payload.get("clip_index", "-")
     percent = status_payload.get("percent", "-")
     message = status_payload.get("message", "")
-    return f"{timestamp} stage={stage} clip={clip} pct={percent} msg={message}"
+    bundle_path = _extract_bundle_path(status_payload)
+    if bundle_path:
+        return f'{timestamp} stage={stage} clip={clip} pct={percent} msg="{message}" bundle_path="{bundle_path}"'
+    return f'{timestamp} stage={stage} clip={clip} pct={percent} msg="{message}"'
+
+
+def format_pretty_line(status_payload: dict) -> str:
+    timestamp = status_payload.get("timestamp", "-")
+    stage = status_payload.get("stage", "-")
+    clip = status_payload.get("clip_index")
+    message = status_payload.get("message", "")
+    clip_label = f"clip_{clip}" if clip is not None else "-"
+    bundle_path = _extract_bundle_path(status_payload)
+    if bundle_path:
+        return f'[{timestamp}] {stage} {clip_label} msg="{message}" bundle_path="{bundle_path}"'
+    return f'[{timestamp}] {stage} {clip_label} msg="{message}"'
 
 
 def main() -> int:
@@ -66,6 +93,7 @@ def main() -> int:
     parser.add_argument("--remote-path", required=True, help="Remote outputs base directory.")
     parser.add_argument("--run-id", required=True, help="Run ID under remote outputs directory.")
     parser.add_argument("--interval-sec", type=float, default=2.0, help="Polling interval (default: 2s).")
+    parser.add_argument("--pretty", action="store_true", help="Pretty one-line output format.")
     parser.add_argument(
         "--tail-progress",
         action="store_true",
@@ -107,7 +135,10 @@ def main() -> int:
             continue
 
         if serialized != last_serialized:
-            print(_format_status_one_line(payload))
+            if args.pretty:
+                print(format_pretty_line(payload))
+            else:
+                print(format_status_one_line(payload))
             last_serialized = serialized
 
             if args.tail_progress:
@@ -132,7 +163,7 @@ def main() -> int:
                 except (RuntimeError, subprocess.TimeoutExpired) as exc:
                     print(f"Stdout tail error: {exc}", file=sys.stderr)
 
-            if payload.get("stage") in {"complete", "failed", "aborted_timeout"}:
+            if payload.get("stage") in {"bundle_ready", "complete", "failed", "aborted_timeout", "aborted_user"}:
                 break
 
         time.sleep(max(0.2, args.interval_sec))
@@ -142,4 +173,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

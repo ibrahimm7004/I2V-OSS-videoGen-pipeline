@@ -1,0 +1,118 @@
+version: 1
+run:
+  id: "hy_i2v_idea02_noise_disappears_r01"
+  model_id: "hunyuan_i2v"
+  output_dir: "outputs"
+  seed_strategy:
+    mode: "base_plus_offset"
+    base_seed: 240731
+    per_clip_offsets: [0, 11, 23, 37, 49, 61, 79, 97]
+  hf_cache:
+    HF_HOME: ""
+    HF_HUB_CACHE: ""
+
+video:
+  width: 1280
+  height: 720
+  fps: 24
+  clip_duration_sec: 5
+  num_clips: 8
+
+generation_defaults:
+  steps: 30
+  guidance_scale: 6.5
+  sampler: "dpmpp_2m"
+  motion_strength: 0.55
+  other: {}
+
+stitching:
+  enabled: true
+  mode: "concat"
+  crossfade_sec: 0
+  rife_boundary_smoothing:
+    enabled: false
+    boundary_sec: 0.0
+
+prompts:
+  global_prompt: |-
+    UGC lifestyle product ad, handheld smartphone realism, natural micro-shake, clean modern look, bright neutral color grade.
+    Single subject: young adult professional woman, warm medium skin tone, dark brown hair in low ponytail, minimal makeup, small hoop earrings.
+    Wardrobe lock: light beige knit sweater, simple watch, short natural nails, no rings.
+    Product lock: matte black true-wireless earbuds with tiny silver accent, matching matte black case, no visible brand marks.
+    Location lock: one continuous modern cafe workspace with window daylight, light wood table, laptop, notebook, ceramic mug; keep same time of day.
+    Lens/composition: 24–35mm equivalent, shallow-to-moderate depth of field, realistic exposure, no cinematic anamorphic artifacts.
+    Motion: keep movements plausible for handheld capture; one camera move maximum per clip.
+    Content rules: silent visuals only; absolutely no on-screen text, captions, logos, watermarks, UI overlays, subtitles, or signage focus.
+  negative_prompt: |-
+    text, captions, subtitles, watermark, logo, brand marks, UI overlay, QR code, readable signage, license plates.
+    deformed hands, extra fingers, fused fingers, missing fingers, warped earbuds, floating objects, duplicated products.
+    identity drift, face morphing, age change, hairstyle change, outfit change, jewelry change, nail change.
+    flicker, temporal jitter, frame tearing, motion smear, ghosting trails, inconsistent lighting, color pulsing.
+    heavy film grain, oversharpening halos, cartoon look, CGI look, plastic skin, unrealistic bokeh blobs.
+  continuity_rules:
+    - "Keep the same woman (face, hair ponytail, earrings), same beige sweater, same watch, same nail length in every clip."
+    - "Keep the same earbuds and case appearance (matte black with small silver accent), same relative size, no brand text."
+    - "Keep the same cafe table setup (light wood table, laptop, notebook, mug) and the same daylight direction and color temperature."
+
+inputs:
+  initial_images:
+    - "assets/idea02/ref_01.png"
+    - "assets/idea02/ref_02.png"
+
+shots:
+  - index: 0
+    name: "chaotic_cafe_hook"
+    prompt: |-
+      Busy cafe moment; the woman sits at a light wood table, background patrons moving in soft blur, she looks mildly distracted as ambient bustle surrounds her.
+      Camera: handheld mid-shot over-table angle, slight left-to-right pan as if capturing the scene quickly.
+      Environment/lighting: window daylight, lively but clean cafe, realistic motion blur on background movement.
+      Continuity reminder: same woman (pony tail, beige sweater, watch), same table setup, no text anywhere.
+  - index: 1
+    name: "case_macro_open"
+    prompt: |-
+      She brings the matte black earbud case into frame and flips it open smoothly, revealing the earbuds seated inside; subtle finger motion and hinge movement.
+      Camera: handheld close-up, slow push-in toward the open case (one smooth move).
+      Environment/lighting: same table and daylight; product highlights are crisp with realistic reflections.
+      Continuity reminder: same hands (short natural nails), same case and earbuds, keep background cafe consistent.
+  - index: 2
+    name: "texture_detail_roll"
+    prompt: |-
+      She rotates the open case slightly in her fingers to show texture and shape, then pauses with the case steady; tiny hand tremor like real handheld.
+      Camera: handheld close-up, gentle micro-tilt downward to follow the rotation (single move).
+      Environment/lighting: same daylight; shallow depth of field with natural falloff; no text or marks on the product.
+      Continuity reminder: maintain identical product look and the same woman’s hands and sweater sleeve edge.
+  - index: 3
+    name: "insert_earbud_pov"
+    prompt: |-
+      Over-shoulder/POV style; she picks up one earbud and inserts it into her ear in one clean motion, then lightly taps it once.
+      Camera: handheld tight medium shot from slightly behind her shoulder, small rightward sway (single move).
+      Environment/lighting: same cafe table; background motion still present but slightly softer.
+      Continuity reminder: same face profile, ponytail, hoop earring, and the same matte black earbud with silver accent.
+  - index: 4
+    name: "noise_fades_calm"
+    prompt: |-
+      The cafe behind her appears calmer in motion; she exhales subtly and her expression relaxes, shoulders drop slightly as she focuses forward.
+      Camera: handheld mid-shot, slow push-in toward her face and upper torso (single move).
+      Environment/lighting: same cafe, same daylight; reduce perceived chaos via steadier background motion and calmer framing.
+      Continuity reminder: keep her identity and outfit locked; keep table objects and lighting unchanged; no text.
+  - index: 5
+    name: "focused_work_flow"
+    prompt: |-
+      She types on her laptop with steady rhythm, then writes a quick note in a notebook; natural hand motion and believable pacing.
+      Camera: handheld over-table medium shot, slight downward tilt to include hands, laptop, notebook (single move).
+      Environment/lighting: same table; clean daylight; mild background blur; no readable screens or text.
+      Continuity reminder: same watch, same nails, same laptop position and mug placement, same earbud in ear.
+  - index: 6
+    name: "product_in_use_side"
+    prompt: |-
+      Side angle close medium; the earbud is visible in her ear as she nods faintly to an unheard beat, then resumes focused typing.
+      Camera: handheld side close medium, slow orbit a few degrees around her head/shoulder (single move).
+      Environment/lighting: same cafe; daylight rim light from window; keep background consistent and non-distracting.
+      Continuity reminder: same hairstyle ponytail, same hoop earring, same earbud placement, no identity drift.
+  - index: 7
+    name: "calm_final_hold"
+    prompt: |-
+      She closes the case gently and sets it beside the laptop, then looks calmly at the screen with a small satisfied smile; end on a steady composed frame.
+      Camera: handheld medium shot over-table, slow pull-back to show product near laptop (single move).
+      Environment/lighting: same table and daylight; quiet stable motion; no text or signage.
+      Continuity reminder: same woman and outfit, same matte black case and earbuds, same cafe setup and lighting.

@@ -48,6 +48,7 @@ class EnvironmentSchema(BaseModel):
     platform: str
     cuda_available: bool
     torch_version: str | None
+    nvidia_smi: str | None
 
 
 class HFCacheSchema(BaseModel):
@@ -105,6 +106,5 @@ class ManifestSchema(BaseModel):
     outputs: OutputsSchema
     stitch_settings: StitchSettingsSchema
     clips: list[ManifestClipSummarySchema]
-    status: Literal["completed", "failed", "aborted_timeout"]
+    status: Literal["completed", "failed", "aborted_timeout", "aborted_user"]
     error: str | None
-

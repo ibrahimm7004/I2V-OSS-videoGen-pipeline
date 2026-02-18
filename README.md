@@ -133,31 +133,113 @@ Alternative CLI form (used by remote helper):
 python -m scripts.run_job --job jobs/example_mock.yaml --out outputs
 ```
 
+## Run One Job
+
+Local:
+
+```powershell
+python scripts\run_job.py jobs\example_mock.yaml --set run_id=my-run
+```
+
+Linux/Vast:
+
+```bash
+python -m scripts.run_job --job jobs/example_wan.yaml --out outputs
+```
+
+## Run All Jobs Sequentially
+
+Uses `jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml jobs/idea03_cogvideox.yaml` if present; otherwise falls back to `jobs/example_mock.yaml` x3.
+
+```powershell
+python scripts\run_all.py --out outputs
+```
+
+Generated summary:
+
+```text
+outputs/run_all_<timestamp>/run_all_manifest.json
+```
+
 ### d) Bundle one run into a single archive
 
 ```powershell
 python scripts\bundle.py --run-dir outputs\<run_id> --format zip
 ```
 
-### Watch progress/status
+## Pause / Resume / Stop
 
-Remote over SSH (Windows PowerShell):
-
-```powershell
-python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id>
-```
-
-With progress and stdout tails on change:
+Print control command (safe preview):
 
 ```powershell
-python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --tail-progress --tail-stdout --tail-lines 20
+python scripts\control_run.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pause
 ```
 
-On instance (Linux), start a run with stdout logging to `outputs/<run_id>/status/stdout.log`:
+Execute immediately on remote:
+
+```powershell
+python scripts\control_run.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --resume --execute
+```
+
+Stop:
+
+```powershell
+python scripts\control_run.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --stop --execute
+```
+
+## Watch Status (SSH)
+
+```powershell
+python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pretty
+```
+
+With progress/stdout tails:
+
+```powershell
+python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pretty --tail-progress --tail-stdout --tail-lines 20
+```
+
+Run helper on instance (writes `status/stdout.log`):
 
 ```bash
 bash scripts/remote_run.sh
 ```
+
+## Download Bundle To Local
+
+Single download:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\download_bundle.ps1 -HostName <INSTANCE_IP> -User root -KeyPath C:\keys\vast.pem -RemoteOutputsPath /workspace/I2V-OSS-videoGen-pipeline/outputs -RunId <run_id> -LocalDir C:\downloads\i2v
+```
+
+Auto-watch and download when ready:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\watch_and_download.ps1 -HostName <INSTANCE_IP> -User root -KeyPath C:\keys\vast.pem -RemoteOutputsPath /workspace/I2V-OSS-videoGen-pipeline/outputs -RunId <run_id> -LocalDir C:\downloads\i2v
+```
+
+## Implementation Guide (Bundle Ready Flow)
+
+1) Start unattended run-all on instance:
+
+```bash
+python scripts/run_all.py --out outputs
+```
+
+2) Watch from local with pretty status:
+
+```powershell
+python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pretty
+```
+
+3) When stage is `bundle_ready`, download:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\download_bundle.ps1 -HostName <INSTANCE_IP> -User root -KeyPath C:\keys\vast.pem -RemoteOutputsPath /workspace/I2V-OSS-videoGen-pipeline/outputs -RunId <run_id> -LocalDir C:\downloads\i2v
+```
+
+4) Downloading a finished bundle does not interfere with subsequent runs.
 
 ### Run scaffold self-check (no pytest)
 
@@ -204,3 +286,4 @@ Expected artifacts:
 - Adapter files contain TODO placeholders for integration.
 - `manifest.json` records `HF_HOME` and `HF_HUB_CACHE` values from environment/config.
 - `progress.log` format is: `ISO8601 | stage | clip=<index|-> | msg=...`
+- Full deployment runbook: `docs/vast_runbook.md`

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
-import platform
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .env_probe import probe_environment
 from .output_schema import ClipLogSchema, EnvironmentSchema, HFCacheSchema, ManifestSchema
 from .utils import ensure_dir, get_git_commit, write_json
 
@@ -57,23 +55,7 @@ def _to_display_path(path: Path, base: Path | None = None) -> str:
 
 
 def environment_summary() -> EnvironmentSchema:
-    torch_version: str | None = None
-    cuda_available = False
-    if importlib.util.find_spec("torch") is not None:
-        try:
-            import torch  # type: ignore
-
-            torch_version = str(getattr(torch, "__version__", None))
-            cuda_available = bool(torch.cuda.is_available())
-        except Exception:
-            torch_version = None
-            cuda_available = False
-    return EnvironmentSchema(
-        python_version=sys.version.split()[0],
-        platform=platform.platform(),
-        cuda_available=cuda_available,
-        torch_version=torch_version,
-    )
+    return EnvironmentSchema.model_validate(probe_environment())
 
 
 def hf_cache_summary(config: Any) -> HFCacheSchema:
