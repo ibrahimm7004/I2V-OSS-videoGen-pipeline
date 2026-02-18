@@ -48,6 +48,9 @@ bash scripts/setup_vast.sh
 source .venv/bin/activate
 ```
 
+Line endings policy: shell scripts and source/config files are committed as LF via `.gitattributes` to stay Linux-safe.
+If you see `/bin/bash^M` or CRLF warnings, run `git add --renormalize .` and recommit.
+
 ## FFmpeg Local Folder
 
 Place FFmpeg binaries under:
