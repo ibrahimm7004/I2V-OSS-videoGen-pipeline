@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shutil
@@ -10,103 +11,31 @@ from zipfile import ZipFile
 
 import sys
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from pipeline.job_schema import JobSpec
 from pipeline.output_schema import ManifestSchema
 from pipeline.runner import run_job
-from pipeline.utils import load_structured_file
 
-
-ALLOWED_MODEL_IDS = {"wan22_ti2v_5b", "hunyuan_i2v", "cogvideox15_5b_i2v"}
-
-
-class HFCacheSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    HF_HOME: str
-    HF_HUB_CACHE: str
-
-
-class SeedStrategy(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    mode: str
-    base_seed: int
-    per_clip_offsets: list[int]
-
-
-class RunSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id: str
-    model_id: str
-    output_dir: str
-    seed_strategy: SeedStrategy
-    hf_cache: HFCacheSpec
-
-
-class VideoSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    fps: int = Field(gt=0)
-    clip_duration_sec: float = Field(gt=0)
-    num_clips: int = Field(gt=0)
-
-
-class GenerationDefaults(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    steps: int = Field(gt=0)
-    guidance_scale: float | int
-    sampler: str
-
-
-class RifeSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool
-    boundary_sec: float | int
-
-
-class StitchingSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool
-    mode: str
-    crossfade_sec: float | int
-    rife_boundary_smoothing: RifeSpec
-
-
-class PromptsSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    global_prompt: str
-    negative_prompt: str
-    continuity_rules: list[str]
-
-
-class InputsSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    initial_images: list[str]
-
-
-class ShotPack(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    index: int
-    prompt: str
-    name: str | None = None
-
-
-class JobPackSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    version: int | str
-    run: RunSpec
-    hf_cache: dict[str, Any] | None = None
-    video: VideoSpec
-    generation_defaults: GenerationDefaults
-    stitching: StitchingSpec
-    prompts: PromptsSpec
-    inputs: InputsSpec
-    shots: list[ShotPack]
+try:
+    from scripts._job_loading import (
+        ALLOWED_MODEL_IDS,
+        JobPackSpec,
+        collect_job_pack_issues,
+        convert_job_pack_to_runtime_job,
+        load_job_pack,
+    )
+except ModuleNotFoundError:
+    from _job_loading import (
+        ALLOWED_MODEL_IDS,
+        JobPackSpec,
+        collect_job_pack_issues,
+        convert_job_pack_to_runtime_job,
+        load_job_pack,
+    )
 
 
 def _image_info(path: Path) -> tuple[int, int] | None:
@@ -142,53 +71,11 @@ def _find_ref_image(asset_dir: Path, ref_name: str) -> Path | None:
     return None
 
 
-def _convert_to_runtime_job(pack: JobPackSpec, run_id: str) -> dict[str, Any]:
-    frames = max(1, int(round(pack.video.clip_duration_sec * pack.video.fps)))
-    fast_fps = 4
-    fast_duration = 0.5
-    fast_frames = max(1, int(round(fast_duration * fast_fps)))
-
-    shots: list[dict[str, Any]] = []
-    for idx, shot in enumerate(pack.shots):
-        seed_offset = pack.run.seed_strategy.per_clip_offsets[idx]
-        shots.append(
-            {
-                "prompt": shot.prompt,
-                "negative_prompt": pack.prompts.negative_prompt,
-                "duration_seconds": fast_duration,
-                "steps": min(8, int(pack.generation_defaults.steps)),
-                "fps": fast_fps,
-                "frames": fast_frames,
-                "seed": int(pack.run.seed_strategy.base_seed + seed_offset),
-                "width": min(512, int(pack.video.width)),
-                "height": min(512, int(pack.video.height)),
-                "params": {
-                    "cfg": pack.generation_defaults.guidance_scale,
-                    "sampler": pack.generation_defaults.sampler,
-                },
-            }
-        )
-
-    runtime = {
-        "job_name": run_id,
-        "run_id": run_id,
-        "model": {"id": "mock", "version": "VERIFY_MOCK"},
-        "output_root": pack.run.output_dir,
-        "dry_run": True,
-        "global_params": {
-            "cfg": pack.generation_defaults.guidance_scale,
-            "sampler": pack.generation_defaults.sampler,
-        },
-        "constants": {
-            "global_prompt": pack.prompts.global_prompt,
-            "continuity_rules": pack.prompts.continuity_rules,
-        },
-        "input_image": pack.inputs.initial_images[0] if pack.inputs.initial_images else None,
-        "shots": shots,
-    }
-    # Ensure JobSpec compatibility using the repo schema.
-    JobSpec.model_validate(runtime)
-    return runtime
+def _convert_to_repo_relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
 
 
 def _run_mock_smoke(job_path: Path, pack: JobPackSpec, failures: list[str]) -> tuple[bool, bool]:
@@ -197,7 +84,14 @@ def _run_mock_smoke(job_path: Path, pack: JobPackSpec, failures: list[str]) -> t
     if run_dir.exists():
         shutil.rmtree(run_dir)
 
-    runtime_job = _convert_to_runtime_job(pack, run_id)
+    runtime_job = convert_job_pack_to_runtime_job(
+        pack,
+        run_id=run_id,
+        model_id_override="mock",
+        output_root_override="outputs",
+        dry_run=True,
+        fast_mode=True,
+    )
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8", dir=str(REPO_ROOT)) as tmp:
         temp_path = Path(tmp.name)
         import yaml
@@ -269,12 +163,23 @@ def _run_mock_smoke(job_path: Path, pack: JobPackSpec, failures: list[str]) -> t
     return True, True
 
 
-def main() -> int:
-    job_paths = [
+def _default_job_paths() -> list[Path]:
+    return [
         REPO_ROOT / "jobs" / "idea01_wan.yaml",
         REPO_ROOT / "jobs" / "idea02_hunyuan.yaml",
         REPO_ROOT / "jobs" / "idea03_cogvideox.yaml",
     ]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify job-pack YAMLs, assets, and mock smoke runs.")
+    parser.add_argument("--jobs", nargs="+", type=Path, default=None, help="Job-pack YAML paths to verify.")
+    args = parser.parse_args()
+
+    if args.jobs:
+        job_paths = [path.resolve() for path in args.jobs]
+    else:
+        job_paths = _default_job_paths()
 
     failures: list[str] = []
     warnings: list[str] = []
@@ -289,7 +194,7 @@ def main() -> int:
 
     print("Discovered job YAMLs:")
     for path in job_paths:
-        print(f"- {path.relative_to(REPO_ROOT).as_posix()}")
+        print(f"- {_convert_to_repo_relative(path)}")
         if not path.exists():
             _fail(failures, f"Missing required job file: {path}")
 
@@ -305,42 +210,18 @@ def main() -> int:
             rows.append(row)
             continue
 
+        before_schema_failures = len(failures)
         try:
-            raw = load_structured_file(job_path)
-            pack = JobPackSpec.model_validate(raw)
+            pack = load_job_pack(job_path)
         except Exception as exc:
             _fail(failures, f"{job_path.name}: YAML/schema parse failed: {exc}")
             rows.append(row)
             continue
 
-        before_schema_failures = len(failures)
-        # Required field semantics checks.
-        if pack.run.model_id not in ALLOWED_MODEL_IDS:
-            _fail(failures, f"{job_path.name}: model_id '{pack.run.model_id}' not in {sorted(ALLOWED_MODEL_IDS)}")
-        if pack.video.num_clips != len(pack.shots):
-            _fail(failures, f"{job_path.name}: video.num_clips={pack.video.num_clips} but shots={len(pack.shots)}")
-        if len(pack.run.seed_strategy.per_clip_offsets) != pack.video.num_clips:
-            _fail(
-                failures,
-                f"{job_path.name}: per_clip_offsets length={len(pack.run.seed_strategy.per_clip_offsets)} "
-                f"!= num_clips={pack.video.num_clips}",
-            )
-        if not pack.prompts.global_prompt.strip():
-            _fail(failures, f"{job_path.name}: prompts.global_prompt is empty")
-        if not pack.prompts.negative_prompt.strip():
-            _fail(failures, f"{job_path.name}: prompts.negative_prompt is empty")
-        if not pack.prompts.continuity_rules:
-            _fail(failures, f"{job_path.name}: prompts.continuity_rules is empty")
-        if not pack.stitching.enabled:
-            _fail(failures, f"{job_path.name}: stitching.enabled must be true")
-        if pack.stitching.mode != "concat":
-            _fail(failures, f"{job_path.name}: stitching.mode must be 'concat'")
-        if not isinstance(pack.stitching.crossfade_sec, (int, float)):
-            _fail(failures, f"{job_path.name}: stitching.crossfade_sec must be numeric")
-
+        for issue in collect_job_pack_issues(pack):
+            _fail(failures, f"{job_path.name}: {issue}")
         row["schema_ok"] = len(failures) == before_schema_failures
 
-        # Asset folder + required refs checks.
         before_assets_failures = len(failures)
         idea_name = _idea_name_from_job(job_path)
         if not idea_name:
@@ -361,7 +242,6 @@ def main() -> int:
         if ref_02 is None:
             _warn(warnings, f"{job_path.name}: optional ref_02 missing under {asset_dir}")
 
-        # Validate inputs.initial_images paths relative to repo root.
         for rel in pack.inputs.initial_images:
             resolved = (REPO_ROOT / rel).resolve()
             if not resolved.exists():
@@ -380,6 +260,11 @@ def main() -> int:
                 _fail(failures, f"{job_path.name}: first image is empty: {first_img}")
 
         row["assets_ok"] = len(failures) == before_assets_failures
+
+        if pack.run.model_id not in ALLOWED_MODEL_IDS:
+            _fail(failures, f"{job_path.name}: model_id '{pack.run.model_id}' is not recognized")
+            rows.append(row)
+            continue
 
         mock_ok, bundle_ok = _run_mock_smoke(job_path, pack, failures)
         row["mock_run_ok"] = mock_ok

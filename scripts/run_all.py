@@ -7,12 +7,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipeline.runner import run_job
-from pipeline.utils import load_structured_file, write_json
+from pipeline.utils import safe_slug, write_json
+
+try:
+    from scripts._job_loading import load_runtime_job_payload
+except ModuleNotFoundError:
+    from _job_loading import load_runtime_job_payload
 
 
 def _default_jobs() -> list[Path]:
@@ -23,7 +30,8 @@ def _default_jobs() -> list[Path]:
     ]
     if all(path.exists() for path in candidates):
         return candidates
-    return [Path("jobs/example_mock.yaml"), Path("jobs/example_mock.yaml"), Path("jobs/example_mock.yaml")]
+    fallback = Path("jobs/examples/example_mock.yaml")
+    return [fallback, fallback, fallback]
 
 
 def _resolve_bundle(run_dir: Path, manifest_data: dict[str, Any]) -> Path | None:
@@ -41,6 +49,18 @@ def main() -> int:
     parser.add_argument("--jobs", nargs="+", default=None, help="Job specs to run sequentially.")
     parser.add_argument("--out", type=Path, default=Path("outputs"), help="Output root directory.")
     parser.add_argument(
+        "--model-id-override",
+        type=str,
+        default=None,
+        help="Override model id for every job (useful for mock runs).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force dry_run for all jobs. If omitted, job defaults are used.",
+    )
+    parser.add_argument(
         "--stop-on-fail",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -56,6 +76,8 @@ def main() -> int:
     orchestrator_dir = out_root / f"run_all_{timestamp}"
     orchestrator_dir.mkdir(parents=True, exist_ok=True)
     run_all_manifest_path = orchestrator_dir / "run_all_manifest.json"
+    generated_jobs_dir = orchestrator_dir / "runtime_jobs"
+    generated_jobs_dir.mkdir(parents=True, exist_ok=True)
 
     records: list[dict[str, Any]] = []
     failures = 0
@@ -79,20 +101,42 @@ def main() -> int:
                 break
             continue
 
-        raw_job = load_structured_file(resolved_job)
-        run_id = raw_job.get("run_id")
-        if not run_id:
-            stem = resolved_job.stem
-            run_id = f"{stem}-{timestamp}-{idx:02d}"
+        run_id_fallback = f"{safe_slug(resolved_job.stem)}-{timestamp}-{idx:02d}"
+        try:
+            runtime_job, source_kind, _ = load_runtime_job_payload(
+                resolved_job,
+                output_root_override=str(out_root),
+                model_id_override=args.model_id_override,
+                dry_run_override=args.dry_run,
+                fast_mode=bool(args.dry_run),
+            )
+        except Exception as exc:
+            failures += 1
+            records.append(
+                {
+                    "index": idx,
+                    "job_path": str(resolved_job),
+                    "run_id": run_id_fallback,
+                    "status": "failed",
+                    "error": str(exc),
+                    "run_dir": None,
+                    "bundle_path": None,
+                }
+            )
+            if args.stop_on_fail:
+                break
+            continue
+
+        run_id = runtime_job.get("run_id") or run_id_fallback
+        runtime_job["run_id"] = run_id
+        runtime_job["job_name"] = runtime_job.get("job_name") or run_id
+        runtime_job["output_root"] = str(out_root)
+
+        runtime_job_path = generated_jobs_dir / f"{idx:02d}_{safe_slug(resolved_job.stem)}.yaml"
+        runtime_job_path.write_text(yaml.safe_dump(runtime_job, sort_keys=False), encoding="utf-8")
 
         try:
-            run_dir = run_job(
-                resolved_job,
-                overrides={
-                    "run_id": run_id,
-                    "output_root": str(out_root),
-                },
-            )
+            run_dir = run_job(runtime_job_path)
             manifest_path = run_dir / "manifest.json"
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             status = manifest_data.get("status", "failed")
@@ -112,6 +156,8 @@ def main() -> int:
                     "run_id": manifest_data.get("run_id", run_id),
                     "status": status,
                     "error": error_value,
+                    "source_kind": source_kind,
+                    "runtime_job_path": str(runtime_job_path),
                     "run_dir": str(run_dir),
                     "bundle_path": str(bundle_path) if bundle_path else None,
                 }
@@ -128,6 +174,8 @@ def main() -> int:
                     "run_id": run_id,
                     "status": "failed",
                     "error": str(exc),
+                    "source_kind": source_kind,
+                    "runtime_job_path": str(runtime_job_path),
                     "run_dir": None,
                     "bundle_path": None,
                 }
@@ -153,4 +201,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
