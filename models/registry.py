@@ -17,6 +17,7 @@ MODEL_REPO_REGISTRY: dict[str, list[HFRepoSpec]] = {
     ],
     "hunyuan_i2v": [
         HFRepoSpec(repo_id="tencent/HunyuanVideo-I2V"),
+        HFRepoSpec(repo_id="hunyuanvideo-community/HunyuanVideo-I2V"),
     ],
     "cogvideox15_5b_i2v": [
         HFRepoSpec(repo_id="zai-org/CogVideoX1.5-5B-I2V"),

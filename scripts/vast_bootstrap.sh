@@ -43,8 +43,8 @@ for name in mods:
         missing.append(name)
 if missing:
     raise SystemExit(f"Missing runtime packages after bootstrap: {', '.join(missing)}")
-from diffusers import CogVideoXImageToVideoPipeline, WanImageToVideoPipeline  # noqa: F401
-print("WAN/CogVideoX runtime packages OK.")
+from diffusers import CogVideoXImageToVideoPipeline, HunyuanVideoImageToVideoPipeline, WanImageToVideoPipeline  # noqa: F401
+print("WAN/Hunyuan/CogVideoX runtime packages OK.")
 PY
 
 FFMPEG_LOCAL="${REPO_ROOT}/ffmpeg/bin/ffmpeg"
