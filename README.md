@@ -1,4 +1,4 @@
-# I2V OSS Video-Gen Test Pipeline (Option 1: Repo + Scripts)
+# I2V OSS Video-Gen Test Pipeline
 
 Lightweight Python scaffold for deterministic, job-spec-driven video-gen testing.
 No Docker, no heavy model inference code yet.
