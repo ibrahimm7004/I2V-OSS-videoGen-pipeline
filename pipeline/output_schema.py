@@ -106,6 +106,7 @@ class ManifestSchema(BaseModel):
     total_runtime_sec: float
     outputs: OutputsSchema
     stitch_settings: StitchSettingsSchema
+    model_runtime: dict[str, Any] | None = None
     clips: list[ManifestClipSummarySchema]
     status: Literal["completed", "failed", "aborted_timeout", "aborted_user"]
     error: str | None

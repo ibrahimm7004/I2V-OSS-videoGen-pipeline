@@ -98,6 +98,7 @@ def build_manifest_base(
                 "preset": "TODO",
             },
         },
+        "model_runtime": None,
         "clips": [],
         "status": "failed",
         "error": None,

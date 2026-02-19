@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from models.base import ClipRequest
 
 from .artifacts import build_manifest_base, hash_file, prepare_run_directories, write_clip_log, write_manifest
 from .bundling import create_run_bundle
+from .clip_validation import validate_clip_output
 from .config import MAX_GUARDRAIL_SECONDS, load_config
 from .frames import extract_last_frame
 from .job_schema import JobSpec
@@ -19,7 +21,7 @@ from .prompting import compile_prompt
 from .progress import ProgressTracker
 from .stitching import stitch_clips_deterministic
 from .timeouts import TimeoutGuard, planned_total_timeout_seconds
-from .utils import generate_run_id, load_structured_file, parse_overrides, set_by_dot_path, utc_now_iso
+from .utils import ensure_dir, generate_run_id, load_structured_file, parse_overrides, set_by_dot_path, utc_now_iso
 
 
 class UserAbortError(RuntimeError):
@@ -116,6 +118,51 @@ def _clip_params(job: JobSpec, shot: Any) -> dict[str, Any]:
         "cfg": cfg,
         "sampler": sampler,
     }
+
+
+def _expected_num_frames(request: ClipRequest, adapter_metadata: dict[str, Any] | None) -> int:
+    meta = adapter_metadata or {}
+    for key in ("requested_num_frames", "wan_num_frames", "target_num_frames"):
+        value = meta.get(key)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    if request.frames and int(request.frames) > 0:
+        return int(request.frames)
+    return max(1, int(round(float(request.duration_seconds) * float(request.fps))))
+
+
+def _is_wan_model(model_id: str) -> bool:
+    lowered = model_id.strip().lower()
+    return lowered.startswith("wan")
+
+
+def _effective_min_frame_diff(
+    *,
+    config: Any,
+    model_id: str,
+    request: ClipRequest,
+) -> float:
+    wan_profile = (
+        request.params.get("wan_profile")
+        or request.params.get("profile")
+        or request.global_params.get("wan_profile")
+        or request.global_params.get("profile")
+    )
+    if hasattr(config, "resolve_post_clip_min_frame_diff"):
+        return float(
+            config.resolve_post_clip_min_frame_diff(
+                model_id=model_id,
+                wan_profile=str(wan_profile) if wan_profile is not None else None,
+            )
+        )
+    explicit = getattr(config, "post_clip_min_frame_diff", None)
+    if explicit is not None:
+        return max(0.0, float(explicit))
+    return 0.0
 
 
 def _empty_clip_log(
@@ -253,6 +300,8 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
 
     adapter = get_adapter(job.model.id, job.model.version, config)
     progress.update(None, "init", 0.0, f"Run initialized with adapter '{job.model.id}'.")
+    wan_model = _is_wan_model(job.model.id)
+    chain_last_frame_enabled = bool(job.global_params.get("chain_last_frame", False)) if wan_model else True
 
     initial_input_image: Path | None = None
     if job.input_image is not None:
@@ -316,7 +365,12 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
             clip_started_at = utc_now_iso()
             clip_output = run_paths.clips_dir / f"clip_{clip_index:03d}.mp4"
             clip_log_path = run_paths.logs_dir / f"log_{clip_index:03d}.json"
-            input_image = initial_input_image if clip_index == 0 else previous_last_frame
+            if clip_index == 0:
+                input_image = initial_input_image
+            elif wan_model and not chain_last_frame_enabled:
+                input_image = initial_input_image
+            else:
+                input_image = previous_last_frame
             seed = shot.seed if shot.seed is not None else clip_index
             prompt_full_text = compile_prompt(job.constants, shot, clip_index)
             params = _clip_params(job, shot)
@@ -341,6 +395,11 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
 
             try:
                 remaining_for_clip = int(max(1, min(guard.remaining_clip_seconds(clip_started), guard.remaining_total_seconds())))
+                if wan_model and input_image is None:
+                    raise RuntimeError(
+                        "WAN clip requires an input image but none was available. "
+                        "Set input_image for clip 0 and/or enable generation_defaults.chain_last_frame."
+                    )
                 request = ClipRequest(
                     clip_index=clip_index,
                     prompt=prompt_full_text,
@@ -361,6 +420,30 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 )
                 result = adapter.generate_clip(request)
                 guard.check_clip(clip_started, clip_index)
+                adapter_meta = dict(result.extra_metadata or {})
+                validation_enabled = bool(config.post_clip_validation_enabled)
+                if validation_enabled:
+                    remaining_for_validation = int(
+                        max(1, min(guard.remaining_clip_seconds(clip_started), guard.remaining_total_seconds()))
+                    )
+                    min_frame_diff_effective = _effective_min_frame_diff(
+                        config=config,
+                        model_id=job.model.id,
+                        request=request,
+                    )
+                    min_size_bytes_effective = max(0, int(config.post_clip_min_size_bytes))
+                    validation_report = validate_clip_output(
+                        ffmpeg_bin=config.ffmpeg_bin,
+                        ffprobe_bin=config.ffprobe_bin,
+                        video_path=result.output_video_path,
+                        requested_num_frames=_expected_num_frames(request, adapter_meta),
+                        min_size_bytes=min_size_bytes_effective,
+                        min_frame_diff=min_frame_diff_effective,
+                        timeout_seconds=remaining_for_validation,
+                    )
+                    validation_report["min_frame_diff_effective"] = min_frame_diff_effective
+                    validation_report["min_size_bytes_effective"] = min_size_bytes_effective
+                    adapter_meta["post_clip_validation"] = validation_report
                 _control_gate(
                     status_dir=status_dir,
                     progress=progress,
@@ -384,6 +467,14 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                     ffmpeg_bin=config.ffmpeg_bin,
                     timeout_seconds=remaining_for_extract,
                 )
+                if wan_model and chain_last_frame_enabled and last_frame_output.exists():
+                    continuity_dir = ensure_dir(run_paths.run_dir / "debug" / "continuity")
+                    continuity_frame_path = continuity_dir / f"last_frame_clip_{clip_index:03d}.png"
+                    shutil.copy2(last_frame_output, continuity_frame_path)
+                    adapter_meta["continuity_last_frame_artifact_path"] = _display_path(
+                        continuity_frame_path,
+                        run_paths.run_dir,
+                    )
                 clip_runtime_wall = guard.check_clip(clip_started, clip_index)
 
                 log_payload["ended_at"] = utc_now_iso()
@@ -391,9 +482,46 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 log_payload["input_image_sha256"] = hash_file(input_image) if input_image else None
                 log_payload["output_clip_sha256"] = hash_file(result.output_video_path)
                 log_payload["last_frame_sha256"] = hash_file(last_frame_output)
-                log_payload["adapter_metadata"] = result.extra_metadata if result.extra_metadata else None
+                adapter_meta["chain_last_frame_enabled"] = bool(wan_model and chain_last_frame_enabled)
+                adapter_meta["init_image_used_path"] = _display_path(input_image, run_paths.run_dir)
+                adapter_meta["previous_clip_last_frame_path"] = (
+                    _display_path(previous_last_frame, run_paths.run_dir) if clip_index > 0 else None
+                )
+                prompt_passed_to_pipe = adapter_meta.get("prompt_passed_to_pipe")
+                if isinstance(prompt_passed_to_pipe, str) and prompt_passed_to_pipe.strip():
+                    log_payload["prompt_full_text"] = prompt_passed_to_pipe
+                prompt_debug_text = log_payload["prompt_full_text"]
+                if isinstance(prompt_debug_text, str) and prompt_debug_text.strip():
+                    prompt_debug_dir = ensure_dir(run_paths.run_dir / "debug" / "prompts")
+                    prompt_debug_path = prompt_debug_dir / f"prompt_{clip_index:03d}.txt"
+                    prompt_debug_path.write_text(prompt_debug_text, encoding="utf-8")
+                    adapter_meta["prompt_debug_artifact_path"] = _display_path(prompt_debug_path, run_paths.run_dir)
+
+                log_payload["adapter_metadata"] = adapter_meta if adapter_meta else None
                 log_payload["status"] = "success"
                 log_payload["error"] = None
+                if wan_model:
+                    model_runtime = manifest.get("model_runtime")
+                    if not isinstance(model_runtime, dict):
+                        model_runtime = {}
+                    repo_id_used = adapter_meta.get("repo_id_used") or adapter_meta.get("repo_id")
+                    if repo_id_used:
+                        model_runtime["repo_id_used"] = str(repo_id_used)
+                    manifest["model_runtime"] = model_runtime
+                if adapter_meta.get("wan_native_720p_applied"):
+                    requested_res = adapter_meta.get("requested_resolution")
+                    internal_res = adapter_meta.get("internal_resolution")
+                    model_runtime = manifest.get("model_runtime")
+                    if not isinstance(model_runtime, dict):
+                        model_runtime = {}
+                    model_runtime["wan_native_720p"] = {
+                        "applied": True,
+                        "requested_resolution": requested_res,
+                        "internal_resolution": internal_res,
+                        "guidance": "Wan2.2 TI2V 720P should use 1280x704.",
+                        "source": adapter_meta.get("wan_native_720p_guidance_url"),
+                    }
+                    manifest["model_runtime"] = model_runtime
 
                 validated_log = ClipLogSchema.model_validate(log_payload).model_dump()
                 write_clip_log(clip_log_path, validated_log)

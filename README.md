@@ -296,6 +296,23 @@ python scripts/prefetch.py --models wan
 python scripts/smoke_adapter_wan22.py --input-image assets/idea01/ref_01.png --out-dir outputs/_adapter_smoke/wan22
 ```
 
+WAN run profiles:
+- `wan_profile=smoke`: fast preset (caps WAN inference steps for quick iteration)
+- `wan_profile=quality`: enforces 45-60 steps and defaults guidance scale to ~6.0 when not provided
+- `motion_strength` is forwarded to the WAN pipeline when supported; if unsupported by the installed pipeline build, the run continues and logs a warning in clip metadata
+- WAN frame quantization uses `4n+1` with nearest `>= round(fps*duration_sec)` (example: `120 -> 121`)
+- WAN repo selection is controlled by `WAN22_REPO_ID` (default: `Wan-AI/Wan2.2-TI2V-5B-Diffusers`), and the resolved `repo_id_used` is written to clip metadata and manifest model runtime
+- WAN export quality knob: `generation_defaults.export_quality` or env `WAN22_EXPORT_QUALITY` (default `9`)
+- WAN export preflight hard-fails if `imageio_ffmpeg` is missing or `ffmpeg -version` is unavailable on PATH
+
+Prompt debug artifacts:
+- Each successful clip can emit the exact prompt sent to `pipe()` at `outputs/<run_id>/debug/prompts/prompt_XXX.txt`
+- `logs/log_XXX.json` keeps `prompt_full_text` aligned with that exact adapter prompt when provided
+- Optional continuity chaining: set `generation_defaults.chain_last_frame: true` to feed each clip's extracted last frame into the next clip; continuity copies are written under `outputs/<run_id>/debug/continuity/`
+
+WAN2.2 TI2V native 720P policy: if a job requests `1280x720`, the adapter maps internally to `1280x704` (and `720x1280` to `704x1280`) and records this in `manifest.json` under `model_runtime.wan_native_720p`.
+Reference: Wan2.2 guidance (`TI2V 720P` recommendation `1280*704`) in the Wan-Video/Wan2.2 docs: https://github.com/Wan-Video/Wan2.2
+
 ## Notes
 
 - WAN 2.2 TI2V inference is implemented.
@@ -303,3 +320,8 @@ python scripts/smoke_adapter_wan22.py --input-image assets/idea01/ref_01.png --o
 - `manifest.json` records `HF_HOME` and `HF_HUB_CACHE` values from environment/config.
 - `progress.log` format is: `ISO8601 | stage | clip=<index|-> | msg=...`
 - Full deployment runbook: `docs/vast_runbook.md`
+
+Post-clip validation env knobs:
+- `POST_CLIP_VALIDATION_ENABLED` (`true`/`false`, default `true`)
+- `POST_CLIP_MIN_SIZE_BYTES` (default `4096`)
+- `POST_CLIP_MIN_FRAME_DIFF` (default is profile-aware: WAN `quality` defaults to `0.003`, WAN `smoke` defaults to `0.0`, and explicit env override wins)

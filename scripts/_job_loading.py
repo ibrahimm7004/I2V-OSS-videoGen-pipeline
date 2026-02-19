@@ -176,6 +176,16 @@ def convert_job_pack_to_runtime_job(
     fast_mode: bool = False,
     source_job_path: Path | None = None,
 ) -> dict[str, Any]:
+    generation_defaults = pack.generation_defaults.model_dump()
+    motion_strength = generation_defaults.get("motion_strength")
+    export_quality = generation_defaults.get("export_quality")
+    chain_last_frame = generation_defaults.get("chain_last_frame")
+    wan_profile = (
+        generation_defaults.get("wan_profile")
+        or generation_defaults.get("run_profile")
+        or generation_defaults.get("profile")
+    )
+
     fps = pack.video.fps if not fast_mode else max(1, min(4, pack.video.fps))
     duration = pack.video.clip_duration_sec if not fast_mode else min(pack.video.clip_duration_sec, 0.5)
     frames = max(1, int(round(duration * fps)))
@@ -200,6 +210,9 @@ def convert_job_pack_to_runtime_job(
                 "params": {
                     "cfg": pack.generation_defaults.guidance_scale,
                     "sampler": pack.generation_defaults.sampler,
+                    **({"motion_strength": motion_strength} if motion_strength is not None else {}),
+                    **({"export_quality": export_quality} if export_quality is not None else {}),
+                    **({"wan_profile": wan_profile} if wan_profile is not None else {}),
                 },
             }
         )
@@ -218,6 +231,10 @@ def convert_job_pack_to_runtime_job(
         "global_params": {
             "cfg": pack.generation_defaults.guidance_scale,
             "sampler": pack.generation_defaults.sampler,
+            **({"motion_strength": motion_strength} if motion_strength is not None else {}),
+            **({"export_quality": export_quality} if export_quality is not None else {}),
+            **({"chain_last_frame": bool(chain_last_frame)} if chain_last_frame is not None else {}),
+            **({"wan_profile": wan_profile} if wan_profile is not None else {}),
         },
         "constants": {
             "global_prompt": pack.prompts.global_prompt,

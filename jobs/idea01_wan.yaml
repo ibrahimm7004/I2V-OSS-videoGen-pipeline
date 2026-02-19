@@ -13,16 +13,19 @@ run:
 
 video:
   width: 1280
-  height: 720
+  height: 704
   fps: 24
   clip_duration_sec: 5
   num_clips: 8
 
 generation_defaults:
-  steps: 28
-  guidance_scale: 6.5
+  wan_profile: "quality"
+  steps: 52
+  guidance_scale: 5.5
   sampler: "dpmpp_2m"
   motion_strength: 0.65
+  export_quality: 9
+  chain_last_frame: true
   other: {}
 
 stitching:

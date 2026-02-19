@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 from .base import ClipRequest, ClipResult, ModelAdapter
 from .registry import repos_for_model_id
+
+LOGGER = logging.getLogger(__name__)
+WAN_TI2V_GUIDANCE_URL = "https://github.com/Wan-Video/Wan2.2"
+WAN_PROFILE_SMOKE = "smoke"
+WAN_PROFILE_QUALITY = "quality"
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
@@ -19,6 +27,60 @@ def _multiple_of_16(value: int) -> int:
     if value <= 16:
         return 16
     return max(16, value - (value % 16))
+
+
+def _choose_wan_frame_count(target_frames: int) -> int:
+    # WAN pipeline frame counts are quantized to 4n+1.
+    if target_frames <= 1:
+        return 1
+    return ((target_frames - 1 + 3) // 4) * 4 + 1
+
+
+def _apply_native_720p_map(width: int, height: int) -> tuple[int, int, bool]:
+    # Wan2.2 TI2V guidance uses 1280x704 (or 704x1280) for 720P mode.
+    if width == 1280 and height == 720:
+        return 1280, 704, True
+    if width == 720 and height == 1280:
+        return 704, 1280, True
+    return width, height, False
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_wan_profile(request: ClipRequest) -> str | None:
+    raw_profile = (
+        request.params.get("wan_profile")
+        or request.params.get("profile")
+        or request.global_params.get("wan_profile")
+        or request.global_params.get("profile")
+        or os.getenv("WAN22_PROFILE")
+    )
+    if raw_profile is None:
+        return None
+    normalized = str(raw_profile).strip().lower()
+    if normalized in {WAN_PROFILE_SMOKE, WAN_PROFILE_QUALITY}:
+        return normalized
+    return None
+
+
+def _resolve_export_quality(request: ClipRequest, config_default: int) -> int:
+    raw_value = request.params.get("export_quality")
+    if raw_value is None:
+        raw_value = request.global_params.get("export_quality")
+    if raw_value is None:
+        raw_value = config_default
+    try:
+        quality = int(raw_value)
+    except (TypeError, ValueError):
+        quality = int(config_default)
+    return max(0, min(10, quality))
 
 
 class Wan22Adapter(ModelAdapter):
@@ -34,6 +96,8 @@ class Wan22Adapter(ModelAdapter):
         self._export_to_video: Any | None = None
         self._device: str | None = None
         self._dtype_name: str | None = None
+        self._imageio_ffmpeg_available: bool | None = None
+        self._ffmpeg_version: str | None = None
 
     def _import_runtime(self) -> tuple[Any, Any, Any]:
         try:
@@ -53,10 +117,20 @@ class Wan22Adapter(ModelAdapter):
         return torch, WanImageToVideoPipeline, export_to_video
 
     def _resolve_repo_candidates(self) -> list[str]:
-        env_repo = os.getenv("WAN22_REPO_ID")
+        configured_repo = str(getattr(self.config, "wan22_repo_id", "") or "").strip()
+        env_repo = str(os.getenv("WAN22_REPO_ID") or "").strip()
         candidates: list[str] = []
-        if env_repo:
-            candidates.append(env_repo.strip())
+        if configured_repo:
+            candidates.append(configured_repo)
+
+        if env_repo and env_repo != configured_repo:
+            LOGGER.warning(
+                "WAN22_REPO_ID env ('%s') differs from config wan22_repo_id ('%s'); using config value.",
+                env_repo,
+                configured_repo or "<empty>",
+            )
+            if env_repo not in candidates:
+                candidates.append(env_repo)
 
         for key in [self.model_id, "wan22_ti2v_5b"]:
             try:
@@ -69,9 +143,47 @@ class Wan22Adapter(ModelAdapter):
                 continue
 
         if not candidates:
-            candidates.append("Wan-AI/Wan2.2-TI2V-5B")
             candidates.append("Wan-AI/Wan2.2-TI2V-5B-Diffusers")
+            candidates.append("Wan-AI/Wan2.2-TI2V-5B")
         return candidates
+
+    def _ensure_export_preflight(self) -> tuple[bool, str]:
+        try:
+            import imageio_ffmpeg  # type: ignore  # noqa: F401
+
+            imageio_ffmpeg_available = True
+        except Exception as exc:
+            raise RuntimeError(
+                "WAN export preflight failed: python package 'imageio_ffmpeg' is missing. "
+                "Install with 'pip install imageio-ffmpeg'."
+            ) from exc
+
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-version"],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "WAN export preflight failed: 'ffmpeg' is not available on PATH. "
+                "Install ffmpeg (e.g. 'apt-get install ffmpeg') and ensure PATH is updated."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("WAN export preflight failed: 'ffmpeg -version' timed out.") from exc
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "WAN export preflight failed: 'ffmpeg -version' returned non-zero "
+                f"({result.returncode}): {result.stderr.strip()}"
+            )
+        first_line = (result.stdout or "").splitlines()
+        ffmpeg_version = first_line[0].strip() if first_line else "unknown"
+        self._imageio_ffmpeg_available = imageio_ffmpeg_available
+        self._ffmpeg_version = ffmpeg_version
+        return imageio_ffmpeg_available, ffmpeg_version
 
     def _resolve_cache_dir(self) -> str | None:
         configured_cache = getattr(self.config, "hf_hub_cache", None)
@@ -234,6 +346,104 @@ class Wan22Adapter(ModelAdapter):
             raise RuntimeError("WAN pipeline produced an empty frame list.")
         return frames
 
+    def _probe_video(self, video_path: Path, timeout_seconds: int = 30) -> dict[str, Any]:
+        ffprobe_bin = getattr(self.config, "ffprobe_bin", "ffprobe")
+        command = [
+            ffprobe_bin,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames,nb_frames,avg_frame_rate",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(video_path),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                timeout=max(5, timeout_seconds),
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"ffprobe not found: {ffprobe_bin}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"ffprobe timed out while validating WAN clip: {video_path}") from exc
+
+        if result.returncode != 0:
+            raise RuntimeError(f"ffprobe failed ({result.returncode}): {result.stderr.strip()}")
+        try:
+            return json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("ffprobe returned invalid JSON for WAN clip validation.") from exc
+
+    def _extract_frame_count(self, probe_payload: dict[str, Any]) -> int | None:
+        streams = probe_payload.get("streams") or []
+        if not streams:
+            return None
+        stream = streams[0] if isinstance(streams[0], dict) else {}
+        for key in ("nb_read_frames", "nb_frames"):
+            value = stream.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                text = value.strip()
+                if text.isdigit():
+                    return int(text)
+        return None
+
+    def _extract_duration_seconds(self, probe_payload: dict[str, Any]) -> float | None:
+        fmt = probe_payload.get("format") or {}
+        if not isinstance(fmt, dict):
+            return None
+        value = fmt.get("duration")
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _validate_encoded_video(
+        self,
+        *,
+        video_path: Path,
+        expected_frames: int,
+        fps: int,
+        timeout_seconds: int,
+    ) -> tuple[int, float]:
+        probe_payload = self._probe_video(video_path, timeout_seconds=timeout_seconds)
+        actual_frames = self._extract_frame_count(probe_payload)
+        if actual_frames is None:
+            raise RuntimeError("WAN clip validation failed: could not determine encoded frame count via ffprobe.")
+
+        if abs(actual_frames - expected_frames) > 1:
+            raise RuntimeError(
+                "WAN clip validation failed: frame count mismatch "
+                f"(expected {expected_frames}, got {actual_frames})."
+            )
+
+        actual_duration = self._extract_duration_seconds(probe_payload)
+        if actual_duration is None:
+            raise RuntimeError("WAN clip validation failed: could not determine encoded duration via ffprobe.")
+
+        expected_duration = float(expected_frames) / float(max(1, fps))
+        duration_tolerance = max(0.15, 2.0 / float(max(1, fps)))
+        if abs(actual_duration - expected_duration) > duration_tolerance:
+            raise RuntimeError(
+                "WAN clip validation failed: duration mismatch "
+                f"(expected ~{expected_duration:.3f}s, got {actual_duration:.3f}s, "
+                f"fps={fps}, tolerance={duration_tolerance:.3f}s)."
+            )
+        return actual_frames, actual_duration
+
     def generate_clip(self, request: ClipRequest) -> ClipResult:
         if request.input_image is None:
             raise ValueError(
@@ -247,54 +457,130 @@ class Wan22Adapter(ModelAdapter):
         export_to_video = self._export_to_video
         if torch is None or export_to_video is None:
             raise RuntimeError("WAN adapter runtime was not initialized.")
+        imageio_ffmpeg_available, ffmpeg_version = self._ensure_export_preflight()
 
         width = _multiple_of_16(int(request.width))
         height = _multiple_of_16(int(request.height))
+        original_size = (width, height)
+        width, height, native_720p_applied = _apply_native_720p_map(width, height)
+        native_720p_warning: str | None = None
+        if native_720p_applied:
+            native_720p_warning = (
+                f"WAN TI2V native_720p applied: requested {original_size[0]}x{original_size[1]} "
+                f"mapped to {width}x{height} per Wan2.2 guidance."
+            )
+            LOGGER.warning(native_720p_warning)
         conditioning_image = self._load_image(Path(request.input_image), width, height)
+        target_frames = max(1, int(round(float(request.fps) * float(request.duration_seconds))))
+        wan_num_frames = _choose_wan_frame_count(target_frames)
+
+        wan_profile = _resolve_wan_profile(request)
+        requested_steps = max(1, int(request.steps))
+        effective_steps = requested_steps
+        if wan_profile == WAN_PROFILE_QUALITY:
+            effective_steps = min(60, max(45, requested_steps))
+        elif wan_profile == WAN_PROFILE_SMOKE:
+            effective_steps = min(16, requested_steps)
 
         cfg = request.params.get("cfg")
         if cfg is None:
             cfg = request.params.get("guidance_scale")
         if cfg is None:
-            cfg = request.global_params.get("cfg", request.global_params.get("guidance_scale", 5.0))
+            cfg = request.global_params.get("cfg", request.global_params.get("guidance_scale"))
+        if cfg is None:
+            if wan_profile == WAN_PROFILE_QUALITY:
+                cfg = 6.0
+            elif wan_profile == WAN_PROFILE_SMOKE:
+                cfg = 4.5
+            else:
+                cfg = 5.0
         guidance_scale = float(cfg)
+        motion_strength = _as_float(request.params.get("motion_strength"))
+        if motion_strength is None:
+            motion_strength = _as_float(request.global_params.get("motion_strength"))
+        export_quality = _resolve_export_quality(
+            request,
+            int(getattr(self.config, "wan22_export_quality", 9)),
+        )
 
         sampler_name = request.params.get("sampler") or request.global_params.get("sampler")
         scheduler_applied = self._apply_sampler_if_possible(pipe, sampler_name)
 
         generator_device = "cuda" if torch.cuda.is_available() else "cpu"
         generator = torch.Generator(device=generator_device).manual_seed(int(request.seed))
+        warnings: list[str] = []
+        if native_720p_warning:
+            warnings.append(native_720p_warning)
         call_kwargs: dict[str, Any] = {
             "image": conditioning_image,
             "prompt": request.prompt,
             "negative_prompt": request.negative_prompt or "",
             "height": height,
             "width": width,
-            "num_frames": max(1, int(request.frames)),
-            "num_inference_steps": max(1, int(request.steps)),
+            "num_frames": wan_num_frames,
+            "num_inference_steps": effective_steps,
             "guidance_scale": guidance_scale,
             "generator": generator,
             "output_type": "pil",
             "callback_on_step_end": self._timeout_callback(started, int(request.max_runtime_seconds)),
             "callback_on_step_end_tensor_inputs": [],
         }
+        if motion_strength is not None:
+            call_kwargs["motion_strength"] = motion_strength
+        unsupported_kwargs: list[str] = []
+        pipe_prompt = str(call_kwargs.get("prompt", request.prompt))
 
-        try:
-            output = pipe(**call_kwargs)
-        except TypeError as exc:
-            # Older diffusers builds may not expose callback hooks for this pipeline.
-            if "callback_on_step_end" not in str(exc):
-                raise
-            call_kwargs.pop("callback_on_step_end", None)
-            call_kwargs.pop("callback_on_step_end_tensor_inputs", None)
-            output = pipe(**call_kwargs)
+        while True:
+            try:
+                output = pipe(**call_kwargs)
+                break
+            except TypeError as exc:
+                error_text = str(exc)
+                handled = False
+                # Older diffusers builds may not expose callback hooks for this pipeline.
+                if "callback_on_step_end" in error_text and "callback_on_step_end" in call_kwargs:
+                    call_kwargs.pop("callback_on_step_end", None)
+                    call_kwargs.pop("callback_on_step_end_tensor_inputs", None)
+                    unsupported_kwargs.append("callback_on_step_end")
+                    warnings.append("WAN pipeline does not support callback_on_step_end; continuing without step callback.")
+                    handled = True
+                if "motion_strength" in error_text and "motion_strength" in call_kwargs:
+                    call_kwargs.pop("motion_strength", None)
+                    unsupported_kwargs.append("motion_strength")
+                    warnings.append("WAN pipeline does not support motion_strength; ignoring requested value.")
+                    handled = True
+                if not handled:
+                    raise
 
         if time.monotonic() - started > request.max_runtime_seconds:
             raise TimeoutError(f"WAN adapter exceeded clip timeout ({request.max_runtime_seconds}s)")
 
         frames = self._extract_video_frames(output)
+        backend_effective_num_frames: int | None
+        try:
+            backend_effective_num_frames = len(frames)
+        except Exception:
+            backend_effective_num_frames = None
+            warnings.append("Could not determine backend effective num_frames from WAN output frames payload.")
         request.output_video_path.parent.mkdir(parents=True, exist_ok=True)
-        export_to_video(frames, output_video_path=str(request.output_video_path), fps=max(1, int(request.fps)))
+        try:
+            export_to_video(
+                frames,
+                output_video_path=str(request.output_video_path),
+                fps=max(1, int(request.fps)),
+                quality=export_quality,
+            )
+        except TypeError as exc:
+            raise RuntimeError(
+                "WAN export failed: current diffusers export_to_video does not accept 'quality'. "
+                "Upgrade diffusers/imageio stack or remove unsupported runtime."
+            ) from exc
+        actual_frames, actual_duration = self._validate_encoded_video(
+            video_path=request.output_video_path,
+            expected_frames=wan_num_frames,
+            fps=max(1, int(request.fps)),
+            timeout_seconds=min(60, int(request.max_runtime_seconds)),
+        )
 
         runtime_seconds = time.monotonic() - started
         return ClipResult(
@@ -304,9 +590,33 @@ class Wan22Adapter(ModelAdapter):
             runtime_seconds=runtime_seconds,
             extra_metadata={
                 "repo_id": self._pipe_repo_id,
+                "repo_id_used": self._pipe_repo_id,
                 "dtype": self._dtype_name,
                 "device": self._device,
                 "scheduler": scheduler_applied,
+                "wan_profile": wan_profile,
+                "steps_requested": requested_steps,
+                "steps_effective": effective_steps,
                 "guidance_scale": guidance_scale,
+                "motion_strength_requested": motion_strength,
+                "motion_strength_applied": "motion_strength" in call_kwargs,
+                "unsupported_kwargs": unsupported_kwargs,
+                "prompt_passed_to_pipe": pipe_prompt,
+                "target_frames": target_frames,
+                "wan_num_frames": wan_num_frames,
+                "quantization_rule": "4n+1",
+                "backend_effective_num_frames": backend_effective_num_frames,
+                "requested_num_frames": wan_num_frames,
+                "encoded_frames": actual_frames,
+                "encoded_duration_sec": actual_duration,
+                "fps": int(request.fps),
+                "export_quality_used": export_quality,
+                "ffmpeg_version": ffmpeg_version,
+                "imageio_ffmpeg_available": imageio_ffmpeg_available,
+                "requested_resolution": {"width": original_size[0], "height": original_size[1]},
+                "internal_resolution": {"width": width, "height": height},
+                "wan_native_720p_applied": native_720p_applied,
+                "wan_native_720p_guidance_url": WAN_TI2V_GUIDANCE_URL,
+                "warnings": warnings,
             },
         )
