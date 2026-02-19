@@ -122,6 +122,17 @@ def main() -> int:
         if model_id != "mock":
             print(f"runtime job model.id is not mock: {runtime_path} -> {model_id}")
             return 1
+        input_image = runtime_payload.get("input_image") if isinstance(runtime_payload, dict) else None
+        if not isinstance(input_image, str):
+            print(f"runtime job input_image missing/non-string: {runtime_path} -> {input_image!r}")
+            return 1
+        input_image_path = Path(input_image)
+        if not input_image_path.is_absolute():
+            print(f"runtime job input_image is not absolute: {runtime_path} -> {input_image}")
+            return 1
+        if not input_image_path.exists():
+            print(f"runtime job input_image path does not exist: {runtime_path} -> {input_image}")
+            return 1
 
     print("Schema parity check passed.")
     return 0

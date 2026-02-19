@@ -153,6 +153,7 @@ def _empty_clip_log(
         "output_clip_sha256": None,
         "last_frame_path": last_frame_path,
         "last_frame_sha256": None,
+        "adapter_metadata": None,
         "status": status,
         "error": error,
     }
@@ -390,6 +391,7 @@ def run_job(job_path: str | Path, overrides: dict[str, Any] | None = None) -> Pa
                 log_payload["input_image_sha256"] = hash_file(input_image) if input_image else None
                 log_payload["output_clip_sha256"] = hash_file(result.output_video_path)
                 log_payload["last_frame_sha256"] = hash_file(last_frame_output)
+                log_payload["adapter_metadata"] = result.extra_metadata if result.extra_metadata else None
                 log_payload["status"] = "success"
                 log_payload["error"] = None
 

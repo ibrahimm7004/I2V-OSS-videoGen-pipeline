@@ -37,6 +37,7 @@ class ClipLogSchema(BaseModel):
     output_clip_sha256: str | None
     last_frame_path: str | None
     last_frame_sha256: str | None
+    adapter_metadata: dict[str, Any] | None = None
     status: Literal["success", "failed", "skipped"]
     error: str | None
 

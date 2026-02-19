@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pipeline.job_schema import JobSpec
 from pipeline.utils import load_structured_file
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_MODEL_IDS = {"wan22_ti2v_5b", "hunyuan_i2v", "cogvideox15_5b_i2v"}
 
 
@@ -139,6 +140,32 @@ def load_job_pack(job_path: Path) -> JobPackSpec:
     return JobPackSpec.model_validate(raw)
 
 
+def _resolve_input_image_path(
+    input_image_value: str | None,
+    *,
+    source_job_path: Path | None,
+) -> str | None:
+    if not input_image_value:
+        return None
+
+    candidate = Path(input_image_value).expanduser()
+    if candidate.is_absolute():
+        return str(candidate.resolve())
+
+    base_candidates: list[Path] = [REPO_ROOT]
+    if source_job_path is not None:
+        base_candidates.append(source_job_path.resolve().parent)
+    base_candidates.append(Path.cwd().resolve())
+
+    for base in base_candidates:
+        resolved = (base / candidate).resolve()
+        if resolved.exists():
+            return str(resolved)
+
+    # Keep deterministic fallback to repo-root-based absolute path.
+    return str((REPO_ROOT / candidate).resolve())
+
+
 def convert_job_pack_to_runtime_job(
     pack: JobPackSpec,
     *,
@@ -147,6 +174,7 @@ def convert_job_pack_to_runtime_job(
     output_root_override: str | None = None,
     dry_run: bool = True,
     fast_mode: bool = False,
+    source_job_path: Path | None = None,
 ) -> dict[str, Any]:
     fps = pack.video.fps if not fast_mode else max(1, min(4, pack.video.fps))
     duration = pack.video.clip_duration_sec if not fast_mode else min(pack.video.clip_duration_sec, 0.5)
@@ -176,6 +204,11 @@ def convert_job_pack_to_runtime_job(
             }
         )
 
+    input_image = _resolve_input_image_path(
+        pack.inputs.initial_images[0] if pack.inputs.initial_images else None,
+        source_job_path=source_job_path,
+    )
+
     runtime = {
         "job_name": run_id,
         "run_id": run_id,
@@ -190,7 +223,7 @@ def convert_job_pack_to_runtime_job(
             "global_prompt": pack.prompts.global_prompt,
             "continuity_rules": pack.prompts.continuity_rules,
         },
-        "input_image": pack.inputs.initial_images[0] if pack.inputs.initial_images else None,
+        "input_image": input_image,
         "shots": shots,
     }
     JobSpec.model_validate(runtime)
@@ -221,6 +254,7 @@ def load_runtime_job_payload(
             output_root_override=output_root_override,
             dry_run=False if dry_run_override is None else dry_run_override,
             fast_mode=fast_mode,
+            source_job_path=job_path,
         )
         return runtime, "job_pack", pack
 

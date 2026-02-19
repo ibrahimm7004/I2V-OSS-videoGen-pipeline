@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +36,158 @@ def _resolve_guidance_scale(request: ClipRequest) -> float:
 
 
 def _resolve_num_frames(request: ClipRequest) -> int:
-    # CogVideoX commonly expects duration*fps + 1 style frame counts.
     duration_based = max(1, int(round(float(request.duration_seconds) * float(request.fps))) + 1)
     explicit = max(1, int(request.frames))
     return max(duration_based, explicit)
+
+
+def _is_pil_image(value: Any) -> bool:
+    return value.__class__.__module__.startswith("PIL.") and value.__class__.__name__ == "Image"
+
+
+def _to_numpy(value: Any) -> Any:
+    import numpy as np
+
+    if isinstance(value, np.ndarray):
+        return value
+    if _is_pil_image(value):
+        return np.asarray(value)
+    if hasattr(value, "detach") and hasattr(value, "cpu") and hasattr(value, "numpy"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _coerce_to_fhwc(raw_frames: Any) -> Any:
+    import numpy as np
+
+    if isinstance(raw_frames, (list, tuple)):
+        if not raw_frames:
+            raise RuntimeError("CogVideoX returned an empty frame sequence.")
+        first = raw_frames[0]
+        if isinstance(first, (list, tuple)) and first:
+            # Common shape: batch list -> frame list
+            raw_frames = first
+        stacked = np.stack([_to_numpy(frame) for frame in raw_frames], axis=0)
+    else:
+        stacked = _to_numpy(raw_frames)
+
+    if stacked.ndim == 5:
+        # B,F,C,H,W or B,F,H,W,C -> use first batch.
+        stacked = stacked[0]
+
+    if stacked.ndim != 4:
+        raise RuntimeError(f"Unexpected frame tensor rank {stacked.ndim}; expected 4D after batching.")
+
+    # Convert to F,H,W,C
+    if stacked.shape[-1] in {1, 3, 4}:
+        fhwc = stacked
+    elif stacked.shape[1] in {1, 3, 4}:
+        fhwc = np.transpose(stacked, (0, 2, 3, 1))
+    else:
+        raise RuntimeError(f"Cannot infer channel axis from frame shape {tuple(stacked.shape)}.")
+
+    if fhwc.shape[-1] == 1:
+        fhwc = np.repeat(fhwc, 3, axis=-1)
+    elif fhwc.shape[-1] == 4:
+        fhwc = fhwc[..., :3]
+    if fhwc.shape[-1] != 3:
+        raise RuntimeError(f"Expected 3-channel frames after conversion, got shape {tuple(fhwc.shape)}.")
+    return fhwc
+
+
+def _extract_frames_payload(output: Any) -> Any:
+    if output is None:
+        raise RuntimeError("CogVideoX pipeline output is None.")
+
+    for attr in ("frames", "videos", "video", "images"):
+        if hasattr(output, attr):
+            value = getattr(output, attr)
+            if value is not None:
+                return value
+
+    if isinstance(output, dict):
+        for key in ("frames", "videos", "video", "images", "sample"):
+            if key in output and output[key] is not None:
+                return output[key]
+
+    if isinstance(output, (tuple, list)) and output:
+        return output[0]
+
+    return output
+
+
+def _sanitize_frames_to_uint8(raw_frames: Any) -> tuple[list[Any], dict[str, Any]]:
+    import numpy as np
+    from PIL import Image
+
+    fhwc = _coerce_to_fhwc(raw_frames)
+    original_dtype = str(fhwc.dtype)
+    original_shape = tuple(int(x) for x in fhwc.shape)
+
+    as_float = fhwc.astype(np.float32, copy=False)
+    total_values = as_float.size
+    nan_count = int(np.isnan(as_float).sum()) if total_values > 0 else 0
+    inf_count = int(np.isinf(as_float).sum()) if total_values > 0 else 0
+    nan_fraction = float((nan_count + inf_count) / max(1, total_values))
+
+    sanitized = np.nan_to_num(as_float, nan=0.0, posinf=1.0, neginf=0.0)
+    raw_min = float(sanitized.min()) if sanitized.size else 0.0
+    raw_max = float(sanitized.max()) if sanitized.size else 0.0
+
+    value_range_assumption = "uint8"
+    if not np.issubdtype(fhwc.dtype, np.integer):
+        if raw_min >= -1e-5 and raw_max <= 1.00001:
+            value_range_assumption = "0..1"
+        elif raw_min >= -1.00001 and raw_max <= 1.00001:
+            value_range_assumption = "-1..1"
+            sanitized = (sanitized + 1.0) * 0.5
+        elif raw_min >= -1e-5 and raw_max <= 255.0001:
+            value_range_assumption = "0..255"
+            sanitized = sanitized / 255.0
+        else:
+            value_range_assumption = "minmax"
+            if math.isclose(raw_max, raw_min, rel_tol=0.0, abs_tol=1e-8):
+                sanitized = np.zeros_like(sanitized, dtype=np.float32)
+            else:
+                sanitized = (sanitized - raw_min) / (raw_max - raw_min)
+    else:
+        if raw_max > 255:
+            value_range_assumption = "int-minmax"
+            if math.isclose(raw_max, raw_min, rel_tol=0.0, abs_tol=1e-8):
+                sanitized = np.zeros_like(sanitized, dtype=np.float32)
+            else:
+                sanitized = (sanitized - raw_min) / (raw_max - raw_min)
+        else:
+            value_range_assumption = "uint8"
+            sanitized = sanitized / 255.0
+
+    sanitized = np.clip(sanitized, 0.0, 1.0)
+    if not np.isfinite(sanitized).all():
+        raise RuntimeError("CogVideoX frame sanitize produced non-finite values after cleanup.")
+
+    frame0 = sanitized[0] if sanitized.shape[0] > 0 else np.zeros((1, 1, 3), dtype=np.float32)
+    frame0_min = float(frame0.min())
+    frame0_max = float(frame0.max())
+    frame_std = float(np.std(sanitized))
+
+    uint8_frames = np.clip(np.round(sanitized * 255.0), 0, 255).astype(np.uint8)
+    if uint8_frames.ndim != 4 or uint8_frames.shape[-1] != 3:
+        raise RuntimeError(f"Unexpected uint8 frame shape after sanitize: {tuple(uint8_frames.shape)}")
+    if uint8_frames.shape[0] <= 0:
+        raise RuntimeError("No frames after CogVideoX sanitize.")
+
+    pil_frames = [Image.fromarray(uint8_frames[i], mode="RGB") for i in range(uint8_frames.shape[0])]
+    stats = {
+        "raw_dtype": original_dtype,
+        "raw_shape": list(original_shape),
+        "value_range_assumption": value_range_assumption,
+        "nan_fraction": nan_fraction,
+        "first_frame_min": frame0_min,
+        "first_frame_max": frame0_max,
+        "frame_std": frame_std,
+        "num_frames_sanitized": int(uint8_frames.shape[0]),
+    }
+    return pil_frames, stats
 
 
 class CogVideoX15I2VAdapter(ModelAdapter):
@@ -53,6 +203,7 @@ class CogVideoX15I2VAdapter(ModelAdapter):
         self._export_to_video: Any | None = None
         self._device: str | None = None
         self._dtype_name: str | None = None
+        self._torch_dtype: Any | None = None
 
     def _import_runtime(self) -> tuple[Any, Any, Any]:
         try:
@@ -87,7 +238,6 @@ class CogVideoX15I2VAdapter(ModelAdapter):
             except ValueError:
                 continue
 
-        # Fallback alias used in some docs.
         if "THUDM/CogVideoX1.5-5B-I2V" not in candidates:
             candidates.append("THUDM/CogVideoX1.5-5B-I2V")
         if not candidates:
@@ -147,6 +297,11 @@ class CogVideoX15I2VAdapter(ModelAdapter):
         enable_offload = _as_bool(os.getenv("COGVX15_ENABLE_CPU_OFFLOAD"), default=False)
         if device == "cuda":
             if enable_offload and hasattr(pipe, "enable_model_cpu_offload"):
+                # Move modules onto CUDA first; offload manager hooks from there.
+                try:
+                    pipe.to("cuda")
+                except Exception:
+                    pass
                 pipe.enable_model_cpu_offload()
             else:
                 pipe.to(device)
@@ -166,9 +321,19 @@ class CogVideoX15I2VAdapter(ModelAdapter):
                 pipe.enable_xformers_memory_efficient_attention()
             except Exception:
                 pass
-        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+        if hasattr(pipe, "enable_vae_tiling"):
+            try:
+                pipe.enable_vae_tiling()
+            except Exception:
+                pass
+        elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
             try:
                 pipe.vae.enable_tiling()
+            except Exception:
+                pass
+        if hasattr(pipe, "enable_vae_slicing"):
+            try:
+                pipe.enable_vae_slicing()
             except Exception:
                 pass
         if hasattr(pipe, "set_progress_bar_config"):
@@ -202,6 +367,7 @@ class CogVideoX15I2VAdapter(ModelAdapter):
                 self._pipe_repo_id = repo_id
                 self._device = device
                 self._dtype_name = dtype_name
+                self._torch_dtype = torch_dtype
                 return pipe
             except Exception as exc:
                 load_errors.append(f"{repo_id}: {exc}")
@@ -261,20 +427,6 @@ class CogVideoX15I2VAdapter(ModelAdapter):
             image = image.resize((width, height), resample=resampling)
         return image
 
-    def _extract_video_frames(self, output: Any) -> list[Any]:
-        frames = None
-        if hasattr(output, "frames"):
-            frames = output.frames
-        elif isinstance(output, tuple) and output:
-            frames = output[0]
-        if frames is None:
-            raise RuntimeError("CogVideoX pipeline returned no frames.")
-        if isinstance(frames, list) and frames and isinstance(frames[0], list):
-            frames = frames[0]
-        if not isinstance(frames, list) or not frames:
-            raise RuntimeError("CogVideoX pipeline produced an empty frame list.")
-        return frames
-
     def generate_clip(self, request: ClipRequest) -> ClipResult:
         if request.input_image is None:
             raise ValueError(
@@ -310,26 +462,54 @@ class CogVideoX15I2VAdapter(ModelAdapter):
             "num_inference_steps": max(1, int(request.steps)),
             "guidance_scale": guidance_scale,
             "generator": generator,
-            "output_type": "pil",
+            "output_type": "pt",
             "callback_on_step_end": self._timeout_callback(started, int(request.max_runtime_seconds)),
             "callback_on_step_end_tensor_inputs": [],
         }
 
+        def _run_pipe() -> Any:
+            return pipe(**call_kwargs)
+
         try:
-            output = pipe(**call_kwargs)
+            if self._device == "cuda" and self._torch_dtype is not None and self._dtype_name != "float32":
+                with torch.autocast(device_type="cuda", dtype=self._torch_dtype):
+                    output = _run_pipe()
+            else:
+                with nullcontext():
+                    output = _run_pipe()
         except TypeError as exc:
             if "callback_on_step_end" not in str(exc):
                 raise
             call_kwargs.pop("callback_on_step_end", None)
             call_kwargs.pop("callback_on_step_end_tensor_inputs", None)
-            output = pipe(**call_kwargs)
+            if self._device == "cuda" and self._torch_dtype is not None and self._dtype_name != "float32":
+                with torch.autocast(device_type="cuda", dtype=self._torch_dtype):
+                    output = _run_pipe()
+            else:
+                output = _run_pipe()
 
         if time.monotonic() - started > request.max_runtime_seconds:
             raise TimeoutError(f"CogVideoX adapter exceeded clip timeout ({request.max_runtime_seconds}s)")
 
-        frames = self._extract_video_frames(output)
+        raw_payload = _extract_frames_payload(output)
+        pil_frames, frame_stats = _sanitize_frames_to_uint8(raw_payload)
+        if frame_stats["num_frames_sanitized"] <= 0:
+            raise RuntimeError("CogVideoX produced zero sanitized frames.")
+        if frame_stats["nan_fraction"] > 0.25 and frame_stats["frame_std"] < 0.002:
+            raise RuntimeError(
+                "CogVideoX frames collapsed after NaN cleanup. "
+                f"nan_fraction={frame_stats['nan_fraction']:.6f} frame_std={frame_stats['frame_std']:.6f}"
+            )
+
         request.output_video_path.parent.mkdir(parents=True, exist_ok=True)
-        export_to_video(frames, output_video_path=str(request.output_video_path), fps=max(1, int(request.fps)))
+        export_to_video(pil_frames, output_video_path=str(request.output_video_path), fps=max(1, int(request.fps)))
+
+        mp4_size_bytes = request.output_video_path.stat().st_size if request.output_video_path.exists() else 0
+        if mp4_size_bytes < 8_192:
+            raise RuntimeError(
+                f"CogVideoX output appears invalidly small ({mp4_size_bytes} bytes). "
+                "Inspect adapter_metadata frame stats."
+            )
 
         runtime_seconds = time.monotonic() - started
         return ClipResult(
@@ -344,5 +524,14 @@ class CogVideoX15I2VAdapter(ModelAdapter):
                 "scheduler": scheduler_applied,
                 "guidance_scale": guidance_scale,
                 "num_frames": num_frames,
+                "fps": int(request.fps),
+                "mp4_size_bytes": int(mp4_size_bytes),
+                "first_frame_min": frame_stats["first_frame_min"],
+                "first_frame_max": frame_stats["first_frame_max"],
+                "nan_fraction": frame_stats["nan_fraction"],
+                "frame_dtype": frame_stats["raw_dtype"],
+                "frame_shape": frame_stats["raw_shape"],
+                "value_range_assumption": frame_stats["value_range_assumption"],
+                "frame_std": frame_stats["frame_std"],
             },
         )

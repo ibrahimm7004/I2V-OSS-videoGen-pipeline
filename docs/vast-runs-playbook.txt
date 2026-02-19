@@ -1,0 +1,203 @@
+Context Brief: Vast instance run, pipeline flow, and current blockers
+1) Instance setup that finally worked
+
+We initially rented an instance that failed because / (overlay) was only 16 GB and filled up during Hugging Face downloads; prefetch failed with No space left on device.
+
+We re-rented correctly with:
+
+Container disk: ~50 GB
+
+Local volume: 400 GB
+
+Volume is mounted at: /workspace
+
+We store Hugging Face cache on the volume to avoid filling /.
+
+Sanity checks we always run after SSH:
+
+nvidia-smi
+df -h
+df -h / /workspace
+
+
+Expect:
+
+/ has ~50 GB with headroom
+
+/workspace has ~400 GB free
+
+2) HF cache location on the instance
+
+We set HF cache to the large mount:
+
+mkdir -p /workspace/hf_cache/hub
+export HF_HOME=/workspace/hf_cache
+export HF_HUB_CACHE=/workspace/hf_cache/hub
+export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+export HF_TOKEN=...   # set to avoid unauth rate limits; do NOT paste token in chat logs
+
+3) Repo + bootstrap flow on the instance
+
+We run everything from the repo inside /workspace:
+
+cd /workspace
+git clone https://github.com/ibrahimm7004/I2V-OSS-videoGen-pipeline.git
+cd I2V-OSS-videoGen-pipeline
+bash scripts/vast_bootstrap.sh
+
+
+Important: bootstrap installs Python deps into the repo venv at ./.venv.
+
+4) Venv activation (important fix)
+
+We hit ModuleNotFoundError: No module named 'pydantic' because we were running the conda (main) python instead of repo venv.
+
+Fix:
+
+cd /workspace/I2V-OSS-videoGen-pipeline
+source .venv/bin/activate
+which python
+python -c "import pydantic; print(pydantic.__version__)"
+
+
+Then always run pipeline commands with this venv active.
+
+5) Prefetch flow (weights warmup)
+
+We prefetch model repos using:
+
+python scripts/prefetch.py --models all
+
+
+Model repos:
+
+Wan-AI/Wan2.2-TI2V-5B
+
+tencent/HunyuanVideo-I2V
+
+zai-org/CogVideoX1.5-5B-I2V
+
+6) Intended run flow for the 3 real jobs
+
+We have 3 job YAMLs and assets folders:
+
+jobs/idea01_wan.yaml uses assets under assets/idea01/
+
+jobs/idea02_hunyuan.yaml uses assets under assets/idea02/
+
+jobs/idea03_cogvideox.yaml uses assets under assets/idea03/
+
+We verify packs first:
+
+python scripts/verify_jobpacks.py --jobs jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml jobs/idea03_cogvideox.yaml
+
+
+Then we run:
+
+python scripts/run_all.py --jobs jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml jobs/idea03_cogvideox.yaml --out outputs --stop-on-fail
+
+
+We monitor progress via status files:
+
+outputs/<run_id>/status/status.json
+
+outputs/<run_id>/status/progress.log
+and optionally via SSH polling watcher from local PC.
+
+7) What is currently broken (main blocker)
+
+We have a schema/loader mismatch between scripts that read job YAMLs.
+
+Symptoms:
+
+run_all.py fails early with pydantic error: “JobSpec.model Field required”; it expects a top-level model: block.
+
+verify_jobpacks.py (and our current YAMLs) expect a different schema: no top-level model:, instead:
+
+run.model_id
+
+run.output_dir
+
+run.hf_cache.HF_HOME and run.hf_cache.HF_HUB_CACHE (uppercase keys)
+
+We attempted to “fix YAMLs” by adding a model: block and lowercase cache keys; this caused verifier failures because it forbids model and forbids run.output_root and forbids lowercase cache keys.
+
+Current verifier error (example):
+run.model_id missing; run.output_dir missing; run.hf_cache.HF_HOME missing; plus model is “extra/forbidden”; run.output_root is “extra/forbidden”; lowercase cache keys are “extra/forbidden”. 
+
+Pasted text
+
+So: some script(s) are validating against JobSpec requiring model, while verifier validates against JobPackSpec requiring run.model_id etc. They are not aligned.
+
+Codex attempted a refactor:
+
+Added shared loader scripts/_job_loading.py intended to unify parsing and convert JobPackSpec → runtime JobSpec
+
+Updated verify_jobpacks.py and run_all.py to use the shared loader
+But we are still seeing schema errors, meaning either:
+
+the instance is still running old code (not pulled), or
+
+the YAMLs on instance differ from local, or
+
+the shared loader still validates against the wrong schema in some path.
+
+8) What we need the new chat to do
+
+Establish the single source of truth schema for job YAMLs:
+
+Decide whether the canonical user-authored job file is JobPackSpec (run.model_id/output_dir/HF_HOME) OR the new JobSpec (top-level model block).
+
+Then force all scripts (run_job.py, run_all.py, verify_jobpacks.py) to use the same loader and schema.
+
+Make job YAMLs stable:
+
+We prefer not to keep changing job YAML format; pick one and stick to it.
+
+Ensure Vast workflow is reproducible:
+
+Pull latest repo changes to instance
+
+Activate .venv
+
+Prefetch to /workspace/hf_cache
+
+Verify packs
+
+Run all jobs
+
+After schema parity is solved, next expected failure is “adapter stubs not implemented”, which is fine; then we move to implementing the real adapters and dependencies.
+
+9) Exact commands we use on instance end-to-end (current best practice)
+# connect via SSH (port varies per instance)
+ssh -p <port> root@<ip>
+
+# verify storage + GPU
+nvidia-smi
+df -h / /workspace
+
+# set caches to volume
+mkdir -p /workspace/hf_cache/hub
+export HF_HOME=/workspace/hf_cache
+export HF_HUB_CACHE=/workspace/hf_cache/hub
+export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+export HF_TOKEN=...
+
+# repo
+cd /workspace
+git clone https://github.com/ibrahimm7004/I2V-OSS-videoGen-pipeline.git || true
+cd I2V-OSS-videoGen-pipeline
+git pull
+
+# venv + deps
+bash scripts/vast_bootstrap.sh
+source .venv/bin/activate
+
+# weights warmup (optional)
+python scripts/prefetch.py --models all
+
+# verify job packs
+python scripts/verify_jobpacks.py --jobs jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml jobs/idea03_cogvideox.yaml
+
+# run all jobs (currently fails due schema mismatch)
+python scripts/run_all.py --jobs jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml jobs/idea03_cogvideox.yaml -

@@ -34,7 +34,18 @@ fi
 
 python - <<'PY'
 import importlib
-mods = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "PIL", "imageio", "imageio_ffmpeg"]
+mods = [
+    "torch",
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "sentencepiece",
+    "google.protobuf",
+    "PIL",
+    "imageio",
+    "imageio_ffmpeg",
+]
 missing = []
 for name in mods:
     try:

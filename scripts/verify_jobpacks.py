@@ -91,6 +91,7 @@ def _run_mock_smoke(job_path: Path, pack: JobPackSpec, failures: list[str]) -> t
         output_root_override="outputs",
         dry_run=True,
         fast_mode=True,
+        source_job_path=job_path,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8", dir=str(REPO_ROOT)) as tmp:
         temp_path = Path(tmp.name)

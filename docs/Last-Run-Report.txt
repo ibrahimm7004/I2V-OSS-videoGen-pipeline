@@ -1,0 +1,326 @@
+OSS Video Gen Pipeline; Paid Instance Run Report (Feb 18, 2026)
+Objective
+
+Validate the end-to-end runtime readiness of the oss-video-gen-pipeline on a paid GPU instance (RTX 4090) for three I2V models:
+
+WAN 2.2 TI2V 5B
+
+CogVideoX 1.5 5B I2V
+
+HunyuanVideo I2V
+
+Goal for this session: confirm infra + cache + venv + schema parity; prefetch; run adapter smokes; identify real blockers before full run_all.
+
+1) Instance and environment; what worked
+Disk and mounts
+
+Container root overlay: 50 GB, healthy headroom.
+
+Volume mount: 400 GB at /workspace, healthy headroom.
+
+Verified via df -h / /workspace.
+
+This fixed the original “overlay 16 GB full” failure mode.
+
+Repo and venv
+
+Repo cloned into /workspace/I2V-OSS-videoGen-pipeline.
+
+Bootstrap succeeded; .venv created and activated.
+
+Verified with:
+
+python -m compileall pipeline models scripts passed.
+
+python scripts/test_run_all_schema_parity.py passed.
+
+Job-pack verification
+
+python scripts/verify_jobpacks.py --jobs ... passed:
+
+schema ok
+
+assets ok
+
+mock run ok
+
+bundle ok
+
+Conclusion: orchestration, schema parity, pack verification, and local runner logic are stable on the instance.
+
+2) Critical runtime configuration; HF cache fix
+Observed issue
+
+Initially, only HF_HOME was set; HF_HUB_CACHE was empty. This risks weights landing under default cache on / and filling root.
+
+Fix applied
+
+Set both to the large volume:
+
+HF_HOME=/workspace/hf_cache
+
+HF_HUB_CACHE=/workspace/hf_cache/hub
+
+Confirmed by echo $HF_HOME and echo $HF_HUB_CACHE.
+
+Takeaway: Must always set HF cache vars before prefetch or any pipeline load.
+
+3) Model smoke test results
+3.1 WAN 2.2; passed after dependency patch ✅
+Initial failure
+
+WAN smoke crashed with:
+
+NameError: name 'ftfy' is not defined
+
+Root cause:
+
+diffusers WAN pipeline expects ftfy but it was not installed.
+
+Fix
+
+pip install -U ftfy
+
+Rerun results
+
+WAN smoke succeeded:
+
+Output MP4 produced: outputs/_adapter_smoke/wan22/clip_000.mp4
+
+Verified:
+
+h264 stream
+
+512×320
+
+non-trivial file size (232 KB)
+
+Conclusion: WAN adapter path is viable; add ftfy to pinned deps so future instances work without manual pip installs.
+
+3.2 CogVideoX 1.5; two-stage failure, still blocked ❌
+Failure A; pipeline load error (earlier)
+
+“T5 tokenizer Placeholder cannot be loaded”
+
+Typically caused by missing sentencepiece/protobuf or transformers/diffusers mismatch.
+
+Fix attempted:
+
+Installed sentencepiece and protobuf (they were already present at the time of rerun).
+
+This got past the pipeline component load stage.
+
+Failure B; GPU OOM during decode
+
+Cog smoke then failed with:
+
+torch.OutOfMemoryError in VAE decode (conv3d) even at smoke settings.
+
+Mitigation that allowed completion:
+
+Clear GPU memory, confirm no processes.
+
+Set:
+
+PYTORCH_ALLOC_CONF=expandable_segments:True
+
+COGVX15_ENABLE_CPU_OFFLOAD=true
+
+COGVX15_DTYPE=fp16
+
+Reduced smoke to duration=1s steps=6 fps=6
+
+Result:
+
+Cog smoke “completed” and wrote MP4 and report.
+
+Critical quality issue; output is effectively empty
+
+Despite completion:
+
+MP4 size: 1.8 KB to 2.1 KB
+
+Extracted frame PNG: ~577 bytes
+
+Frames present per ffprobe (8 frames, then 17 frames on longer run), but highly compressible, likely black/invalid.
+
+Persistent warning:
+
+RuntimeWarning: invalid value encountered in cast from diffusers image_processor.
+
+Conclusion: Cog adapter currently returns invalid frames (NaN/clamped) or writes unusable frames; needs a real patch, not just parameter tweaks.
+
+3.3 Hunyuan; not validated properly in this session ⚠️
+
+We did not complete a clean Hunyuan smoke due to:
+
+Instance instability and reset before finishing the full sequence.
+
+Earlier attempts showed two issues:
+
+tencent/HunyuanVideo-I2V returned 404 for model_index.json, meaning it is not a diffusers-format repo.
+
+Community fallback path OOMed, but the OOM was likely worsened by stale GPU allocations from prior runs.
+
+Conclusion: Hunyuan requires:
+
+correct repo selection (diffusers-compatible repo or custom inference wrapper)
+
+clean VRAM between runs
+
+potentially forced low-res/offload settings for smoke
+
+4) Infrastructure stability issue; instance freeze
+
+Observed:
+
+Terminal froze and instance became unreachable; required destroy.
+
+Takeaway:
+
+Marketplace hosts can be flaky; treat instances as ephemeral.
+
+Always run long commands in tmux over SSH to survive UI drops.
+
+Prefer stable providers/hosts or migrate paid runs to more managed infra if instability repeats.
+
+What must be fixed before the next paid run
+A) Make WAN reproducible (small fix)
+
+Add ftfy to requirements.txt so WAN never fails again.
+
+Optionally pin diffusers version known to support WAN pipeline cleanly.
+
+B) Fix CogVideoX output correctness (real blocker)
+
+Cog now loads and can run without OOM when offloaded, but output frames are invalid.
+
+Likely root causes
+
+NaNs in decoded frames, causing cast warnings and black frames.
+
+Adapter might be writing the wrong output field from diffusers pipeline (some pipelines return different structures).
+
+VAE decode path might be unstable under fp16+offload at small settings, causing NaNs.
+
+Fix plan (next instance or locally then redeploy)
+
+Add diagnostics in models/cogvideox15_i2v.py after pipeline call:
+
+check frame tensor stats:
+
+dtype
+
+min/max
+
+percent NaN/inf
+
+log into per-clip json.
+
+Sanitize frames before encoding:
+
+np.nan_to_num
+
+clamp to [0,1] if float, then convert to uint8.
+
+Confirm you are using the correct output field:
+
+output.frames vs output.videos vs list of PIL images
+
+Add a smoke assertion:
+
+MP4 file size threshold (e.g. >100 KB for 2 sec at 512×320)
+
+First frame png > 10 KB
+If fail: raise clearly “frames invalid” rather than silently writing junk.
+
+Consider enabling VAE tiling if supported:
+
+pipe.enable_vae_tiling() or pipe.vae.enable_tiling() if available.
+
+If still NaNs:
+
+try bf16 for Cog (some stacks behave better than fp16)
+
+disable certain attention optimizations
+
+update/pin torch, diffusers, transformers to a known compatible trio
+
+Decision rule:
+
+If after sanitization you still get near-empty frames, the adapter is likely reading wrong outputs or the diffusers pipeline is incompatible with that repo; then switch to the repo’s official inference script instead of diffusers.
+
+C) Stabilize Hunyuan (moderate blocker)
+
+Confirm which repo actually provides diffusers model_index.json.
+
+If official repo is not diffusers:
+
+implement adapter using the repo’s native inference code.
+
+Always run Hunyuan smoke alone on clean GPU:
+
+kill stray processes
+
+set:
+
+HUNYUAN_ENABLE_CPU_OFFLOAD=true
+
+HUNYUAN_DTYPE=fp16 initially for memory
+
+PYTORCH_ALLOC_CONF=expandable_segments:True
+
+run low frames/res first.
+
+Next instance checklist (do not deviate)
+1) Start inside tmux (avoid losing work)
+tmux new -s run
+
+2) Sanity
+nvidia-smi
+df -h / /workspace
+
+3) Caches
+mkdir -p /workspace/hf_cache/hub /workspace/tmp
+export HF_HOME=/workspace/hf_cache
+export HF_HUB_CACHE=/workspace/hf_cache/hub
+export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+export TMPDIR=/workspace/tmp
+# export HF_TOKEN=... (privately)
+
+4) Repo + venv
+cd /workspace
+rm -rf I2V-OSS-videoGen-pipeline || true
+git clone https://github.com/ibrahimm7004/I2V-OSS-videoGen-pipeline.git
+cd I2V-OSS-videoGen-pipeline
+bash scripts/vast_bootstrap.sh
+source .venv/bin/activate
+python -m compileall pipeline models scripts
+python scripts/test_run_all_schema_parity.py
+
+5) Prefetch all
+python scripts/prefetch.py --models all
+
+6) Smokes in order (one at a time, clear VRAM between)
+
+WAN smoke, then validate file size and frame extraction.
+
+Cog smoke; stop if output tiny; apply Cog patch.
+
+Hunyuan smoke after Cog or independently; ensure no stale VRAM.
+
+7) Full runs
+
+If Cog remains broken, run only:
+
+python scripts/run_all.py --jobs jobs/idea01_wan.yaml jobs/idea02_hunyuan.yaml --out outputs --stop-on-fail
+
+Current status summary
+
+Pipeline scaffolding, orchestration, schema parity: stable
+
+WAN: working after adding missing dependency ftfy (should be committed)
+
+CogVideoX: runs but outputs invalid; needs adapter-level fix (sanitize frames and/or correct output extraction, possibly move off diffusers)
+
+Hunyuan: not fully validated; likely needs correct repo/inference path and VRAM-clean smoke
