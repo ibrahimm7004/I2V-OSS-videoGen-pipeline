@@ -48,6 +48,9 @@ bash scripts/setup_vast.sh
 source .venv/bin/activate
 ```
 
+Vast automation wrappers are under `scripts/vast/` with a full runbook in `docs/vast_runbook.md`.
+Fast path on instance: `bash scripts/vast/run_all_steps.sh --repo-url <YOUR_REPO_URL> --prefetch-wan`
+
 Line endings policy: shell scripts and source/config files are committed as LF via `.gitattributes` to stay Linux-safe.
 If you see `/bin/bash^M` or CRLF warnings, run `git add --renormalize .` and recommit.
 
@@ -111,6 +114,58 @@ python scripts\prefetch.py --models wan
 ```
 
 ## Commands
+
+## WAN Idea Packs
+
+WAN job packs now live under:
+
+```text
+jobs/wan/idea01.yaml
+jobs/wan/idea02.yaml
+jobs/wan/idea03.yaml
+```
+
+Assets are namespaced under:
+
+```text
+assets/wan/idea01/
+assets/wan/idea02/
+assets/wan/idea03/
+```
+
+Regenerate WAN packs and sync assets:
+
+```powershell
+python scripts\build_job.py --sync-assets
+```
+
+Legacy note: `jobs/idea01_wan.yaml` is still supported but deprecated in favor of `jobs/wan/idea01.yaml`.
+
+### Run WAN by Idea
+
+Quick test:
+
+```powershell
+python scripts\run_wan.py --idea idea01 --num-clips 1 --clip-duration-sec 2
+```
+
+Full run:
+
+```powershell
+python scripts\run_wan.py --idea idea01 --num-clips 8 --clip-duration-sec 5
+```
+
+Dry run (adapter-free through `run_all.py` mock override):
+
+```powershell
+python scripts\run_wan.py --idea idea01 --dry-run
+```
+
+Verify all WAN packs:
+
+```powershell
+python scripts\verify_jobpacks.py --jobs jobs/wan
+```
 
 ### a) Local dry run with mock adapter
 
@@ -298,8 +353,10 @@ python scripts/smoke_adapter_wan22.py --input-image assets/idea01/ref_01.png --o
 
 WAN run profiles:
 - `wan_profile=smoke`: fast preset (caps WAN inference steps for quick iteration)
-- `wan_profile=quality`: enforces 45-60 steps and defaults guidance scale to ~6.0 when not provided
+- `wan_profile=quality`: defaults to `steps=60`, `guidance_scale=5.0`, `motion_strength=0.70` when not provided
 - `motion_strength` is forwarded to the WAN pipeline when supported; if unsupported by the installed pipeline build, the run continues and logs a warning in clip metadata
+- Detailed tuning guide: `docs/wan_quality_tuning.md`
+- Cinematic constraints block is enabled by default for WAN `quality`, disabled by default for WAN `smoke`, and can be overridden per shot with `cinematic_constraints: true|false`
 - WAN frame quantization uses `4n+1` with nearest `>= round(fps*duration_sec)` (example: `120 -> 121`)
 - WAN repo selection is controlled by `WAN22_REPO_ID` (default: `Wan-AI/Wan2.2-TI2V-5B-Diffusers`), and the resolved `repo_id_used` is written to clip metadata and manifest model runtime
 - WAN export quality knob: `generation_defaults.export_quality` or env `WAN22_EXPORT_QUALITY` (default `9`)

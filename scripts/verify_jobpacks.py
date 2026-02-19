@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
@@ -58,11 +58,6 @@ def _warn(warnings: list[str], text: str) -> None:
     warnings.append(text)
 
 
-def _idea_name_from_job(job_path: Path) -> str | None:
-    match = re.search(r"(idea\d+)", job_path.stem.lower())
-    return match.group(1) if match else None
-
-
 def _find_ref_image(asset_dir: Path, ref_name: str) -> Path | None:
     for ext in [".png", ".jpg", ".jpeg", ".webp"]:
         candidate = asset_dir / f"{ref_name}{ext}"
@@ -79,7 +74,7 @@ def _convert_to_repo_relative(path: Path) -> str:
 
 
 def _run_mock_smoke(job_path: Path, pack: JobPackSpec, failures: list[str]) -> tuple[bool, bool]:
-    run_id = f"verify-{job_path.stem}-mock"
+    run_id = f"verify-{job_path.stem}-mock-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
     run_dir = (REPO_ROOT / "outputs" / run_id).resolve()
     if run_dir.exists():
         shutil.rmtree(run_dir)
@@ -172,15 +167,38 @@ def _default_job_paths() -> list[Path]:
     ]
 
 
+def _expand_job_inputs(items: list[Path] | None) -> list[Path]:
+    if not items:
+        return _default_job_paths()
+    expanded: list[Path] = []
+    seen: set[Path] = set()
+    for item in items:
+        path = item.resolve()
+        if path.is_dir():
+            for child in sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml")):
+                resolved_child = child.resolve()
+                if resolved_child not in seen:
+                    seen.add(resolved_child)
+                    expanded.append(resolved_child)
+            continue
+        if path not in seen:
+            seen.add(path)
+            expanded.append(path)
+    return expanded
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify job-pack YAMLs, assets, and mock smoke runs.")
-    parser.add_argument("--jobs", nargs="+", type=Path, default=None, help="Job-pack YAML paths to verify.")
+    parser.add_argument(
+        "--jobs",
+        nargs="+",
+        type=Path,
+        default=None,
+        help="Job-pack YAML paths or directories to verify.",
+    )
     args = parser.parse_args()
 
-    if args.jobs:
-        job_paths = [path.resolve() for path in args.jobs]
-    else:
-        job_paths = _default_job_paths()
+    job_paths = _expand_job_inputs(args.jobs)
 
     failures: list[str] = []
     warnings: list[str] = []
@@ -224,24 +242,27 @@ def main() -> int:
         row["schema_ok"] = len(failures) == before_schema_failures
 
         before_assets_failures = len(failures)
-        idea_name = _idea_name_from_job(job_path)
-        if not idea_name:
-            _fail(failures, f"{job_path.name}: cannot infer idea folder name from filename")
+        inferred_asset_dir: Path | None = None
+        if pack.inputs.initial_images:
+            inferred_asset_dir = (REPO_ROOT / pack.inputs.initial_images[0]).resolve().parent
+        if inferred_asset_dir is None or not inferred_asset_dir.exists():
+            _fail(
+                failures,
+                f"{job_path.name}: could not resolve asset folder from inputs.initial_images; "
+                "expected an existing folder for ref_01.*",
+            )
             rows.append(row)
             continue
 
-        asset_dir = assets_root / idea_name
-        if not asset_dir.exists():
-            _fail(failures, f"{job_path.name}: missing asset folder {asset_dir}")
-            rows.append(row)
-            continue
-
-        ref_01 = _find_ref_image(asset_dir, "ref_01")
-        ref_02 = _find_ref_image(asset_dir, "ref_02")
+        ref_01 = _find_ref_image(inferred_asset_dir, "ref_01")
+        ref_02 = _find_ref_image(inferred_asset_dir, "ref_02")
         if ref_01 is None:
-            _fail(failures, f"{job_path.name}: missing required {asset_dir}/ref_01.(png|jpg|jpeg|webp)")
+            _fail(
+                failures,
+                f"{job_path.name}: missing required {inferred_asset_dir}/ref_01.(png|jpg|jpeg|webp)",
+            )
         if ref_02 is None:
-            _warn(warnings, f"{job_path.name}: optional ref_02 missing under {asset_dir}")
+            _warn(warnings, f"{job_path.name}: optional ref_02 missing under {inferred_asset_dir}")
 
         for rel in pack.inputs.initial_images:
             resolved = (REPO_ROOT / rel).resolve()

@@ -1,0 +1,339 @@
+version: 1
+run:
+  id: wan22_idea03_v1
+  model_id: wan22_ti2v_5b
+  output_dir: outputs
+  seed_strategy:
+    mode: base_plus_offset
+    base_seed: 190037
+    per_clip_offsets:
+    - 0
+    - 11
+    - 23
+    - 37
+    - 49
+    - 61
+    - 74
+    - 88
+    - 101
+    - 117
+  hf_cache:
+    HF_HOME: ''
+    HF_HUB_CACHE: ''
+video:
+  width: 1280
+  height: 704
+  fps: 24
+  clip_duration_sec: 6.0
+  num_clips: 10
+generation_defaults:
+  wan_profile: quality
+  steps: 60
+  guidance_scale: 5.0
+  sampler: dpmpp_2m
+  motion_strength: 0.7
+  motion_block: true
+  export_quality: 9
+  chain_last_frame: true
+  other: {}
+stitching:
+  enabled: true
+  mode: concat
+  crossfade_sec: 0
+  rife_boundary_smoothing:
+    enabled: false
+    boundary_sec: 0.0
+prompts:
+  global_prompt: "Ultra-real prehistoric documentary realism; 16:9; bright clear daytime\
+    \ with high visibility and crisp detail.\nContinuous setting: dense tropical jungle\
+    \ riverbank with shallow water, wet sand, exposed roots, ferns, drifting mist\
+    \ near waterline only.\nSubject: one insanely gigantic Titanoboa, far larger than\
+    \ surrounding trees and river width, charcoal-olive scales with subtle amber iridescence,\
+    \ mud flecks, scar near left jawline; consistent size and anatomy every clip.\n\
+    The snake\u2019s body thickness rivals tree trunks; coils displace large volumes\
+    \ of sand and water; scale must feel geologically massive and overwhelming.\n\
+    Camera language: natural-history cinematography; stabilized handheld micro-shake;\
+    \ 35mm lens look; realistic depth of field; no stylized grading.\nLighting: hard\
+    \ sun filtered through canopy; sharp but natural shadows; consistent time of day;\
+    \ consistent color temperature.\nNo text anywhere; no subtitles; no captions;\
+    \ no logos; no watermarks; silent video."
+  negative_prompt: 'Any text, captions, subtitles, watermarks, logos, UI overlays,
+    credits.
+
+    Low-res, blurry, out of focus, excessive motion blur, smeared textures, waxy skin,
+    plastic look.
+
+    Deformed anatomy, extra limbs, duplicated head, broken jaw, melting scales, inconsistent
+    scale pattern.
+
+    Temporal flicker, jitter, sudden teleporting, scene cuts, identity drift, costume
+    drift.
+
+    Cartoon, anime, illustration, painterly, over-saturated, heavy film grain, unrealistic
+    color grading.
+
+    Impossible physics unrelated to scale emphasis, floating objects, warped perspective,
+    stretched bodies, unnatural shadows.'
+  continuity_rules:
+  - 'Maintain the same Titanoboa identity every clip: charcoal-olive scales with subtle
+    amber iridescence, scar near left jawline, mud flecks; do not change markings.'
+  - The Titanoboa must remain unrealistically gigantic in every shot; body thickness
+    comparable to massive tree trunks; always dwarfing trees and riverbank.
+  - 'Keep the same continuous riverbank micro-location: shallow water at frame right,
+    wet sand foreground, dense ferns and roots midground; no hard teleports.'
+inputs:
+  initial_images:
+  - assets/wan/idea03/ref_01.png
+  - assets/wan/idea03/ref_02.png
+shots:
+- index: 0
+  name: Colossal Emergence
+  prompt: "Titanoboa\u2019s enormous head, larger than a boulder, pushes through towering\
+    \ ferns; a single coil rises higher than nearby trees as it spills onto wet sand.\n\
+    Camera: extreme low-angle wide, slow push-in emphasizing the towering vertical\
+    \ height of a raised coil against the canopy.\nEnvironment: bright sun through\
+    \ canopy, roots appear small compared to the snake\u2019s trunk-like body; river\
+    \ visible frame right.\nContinuity reminder: same scar on left jawline and same\
+    \ gigantic proportions dominating trees and river.\n\nMOTION:\n- Subject: massive\
+    \ serpentine head advance with heavy inertial sway\n- Environment: foliage displacement,\
+    \ sand compression, river ripple propagation, mist drift\n- Camera: slow subtle\
+    \ dolly-in only; no rapid zoom; no sudden framing changes; subject centered"
+  motion_block: true
+  motion_subject: massive serpentine head advance with heavy inertial sway
+  motion_environment: foliage displacement, sand compression, river ripple propagation,
+    mist drift
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 1
+  name: Tree-Level Coil
+  prompt: 'Continuing, Titanoboa forms a colossal coil that arches above the treeline;
+    its body diameter rivals the thickest jungle trunks.
+
+    Camera: lateral dolly revealing full height of the coil relative to trees; keep
+    scale comparison obvious.
+
+    Environment: ferns and roots look miniature; sand compresses deeply under immense
+    weight.
+
+    Continuity reminder: same Titanoboa markings and extreme size towering over vegetation.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 2
+  name: River Overshadowed
+  prompt: "From the last frame, Titanoboa stretches across the riverbank; one massive\
+    \ coil spans nearly the full width of the shallow river, casting a long shadow\
+    \ over water.\nCamera: slow pan along the snake\u2019s immense length, ending\
+    \ on the massive head near frame left.\nEnvironment: water ripples distort under\
+    \ its bulk; trees appear dwarfed.\nContinuity reminder: preserve identical scar\
+    \ and coloration; maintain overwhelming size relative to river and trees.\n\n\
+    MOTION:\n- Subject: subtle natural body movement; breathing; small head turns;\
+    \ micro-expressions\n- Environment: rain streaks and droplets; neon reflections\
+    \ shimmering on wet asphalt; steam drifting; light wind\n- Camera: slow subtle\
+    \ dolly-in only; no rapid zoom; no sudden framing changes; subject centered"
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 3
+  name: Mountainous Strike
+  prompt: 'Titanoboa launches forward; its head surges like a landslide, displacing
+    sand in huge waves; nearby trees bend from the force of motion.
+
+    Camera: dynamic push-in following the gigantic head, framing trees and river to
+    reinforce scale.
+
+    Environment: massive sand plumes and water displacement emphasize weight and mass.
+
+    Continuity reminder: same Titanoboa identity; maintain exaggerated colossal scale
+    against jungle backdrop.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 4
+  name: Forest-Crushing Drag
+  prompt: 'Continuing, Titanoboa drags prey across sand; each coil crushes small trees
+    and roots under its trunk-thick body.
+
+    Camera: low tracking shot showing coils flattening vegetation as they advance.
+
+    Environment: ferns snap and sand trenches form from extreme weight.
+
+    Continuity reminder: same scar and scale pattern; maintain absurdly large proportions
+    dwarfing landscape.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 5
+  name: Canopy-Level Constriction
+  prompt: 'From the last frame, Titanoboa lifts part of its body high; a loop rises
+    to canopy height while tightening around prey below.
+
+    Camera: upward tilt from ground to raised coil towering against sky.
+
+    Environment: bright sky visible between trees; coil silhouette larger than tree
+    crowns.
+
+    Continuity reminder: identical Titanoboa markings; same enormous height relative
+    to trees.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 6
+  name: Root-Shattering Anchor
+  prompt: "Continuing, Titanoboa braces its tail against a massive root system; the\
+    \ root appears small compared to the snake\u2019s diameter.\nCamera: medium-wide\
+    \ showing tail thickness next to roots for direct scale contrast.\nEnvironment:\
+    \ sand caves inward under immense pressure; river churns lightly.\nContinuity\
+    \ reminder: keep same Titanoboa scar and exaggerated trunk-like body thickness.\n\
+    \nMOTION:\n- Subject: subtle natural body movement; breathing; small head turns;\
+    \ micro-expressions\n- Environment: rain streaks and droplets; neon reflections\
+    \ shimmering on wet asphalt; steam drifting; light wind\n- Camera: slow subtle\
+    \ dolly-in only; no rapid zoom; no sudden framing changes; subject centered"
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 7
+  name: Valley-Spanning Reposition
+  prompt: "From the last frame, Titanoboa shifts position; its body arcs across the\
+    \ riverbank like a living bridge, nearly spanning from jungle wall to water\u2019\
+    s edge.\nCamera: slow pull-back to reveal the vast horizontal length across frame.\n\
+    Environment: trees and shoreline appear miniature beneath the snake\u2019s bulk.\n\
+    Continuity reminder: same Titanoboa identity; maintain overwhelming scale dominating\
+    \ entire frame.\n\nMOTION:\n- Subject: subtle natural body movement; breathing;\
+    \ small head turns; micro-expressions\n- Environment: rain streaks and droplets;\
+    \ neon reflections shimmering on wet asphalt; steam drifting; light wind\n- Camera:\
+    \ slow subtle dolly-in only; no rapid zoom; no sudden framing changes; subject\
+    \ centered"
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 8
+  name: Colossal S-Curve
+  prompt: 'Continuing, Titanoboa settles into an enormous S-curve; each bend as wide
+    as a small hill, shadow stretching across sand and water.
+
+    Camera: wide establishing shot emphasizing landscape dwarfed by the snake.
+
+    Environment: bright midday sun; long, heavy shadow cast by towering coils.
+
+    Continuity reminder: preserve same scar and coloration; keep gigantic proportions
+    unchanged.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 9
+  name: Titanic Glide
+  prompt: 'From the last frame, Titanoboa glides forward parallel to the river; its
+    body undulates like a moving ridge line, filling most of the 16:9 frame.
+
+    Camera: side-follow tracking shot with trees and river clearly smaller in comparison.
+
+    Environment: sand ridges form under its weight; canopy appears low relative to
+    its height.
+
+    Continuity reminder: maintain exact markings and impossibly massive size; same
+    riverbank setting and bright daylight.
+
+
+    MOTION:
+
+    - Subject: broad undulating glide with consistent body wave rhythm
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: side-follow tracking only; no rapid zoom; maintain scale references'
+  motion_block: true
+  motion_subject: broad undulating glide with consistent body wave rhythm
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: side-follow tracking only; no rapid zoom; maintain scale references
+  motion_notes: ''

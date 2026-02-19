@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 from .utils import utc_now_iso
@@ -39,7 +40,17 @@ class ProgressTracker:
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.status_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(event, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_path, self.status_path)
+        last_error: Exception | None = None
+        for attempt in range(10):
+            try:
+                os.replace(tmp_path, self.status_path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                # Windows can transiently lock files while scanners/indexers read them.
+                time.sleep(0.05 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
 
     def _append_progress_line(self, event: dict) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

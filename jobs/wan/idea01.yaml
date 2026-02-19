@@ -1,0 +1,325 @@
+version: 1
+run:
+  id: wan22_idea01_v1
+  model_id: wan22_ti2v_5b
+  output_dir: outputs
+  seed_strategy:
+    mode: base_plus_offset
+    base_seed: 381742
+    per_clip_offsets:
+    - 0
+    - 11
+    - 23
+    - 37
+    - 49
+    - 61
+    - 74
+    - 88
+  hf_cache:
+    HF_HOME: ''
+    HF_HUB_CACHE: ''
+video:
+  width: 1280
+  height: 704
+  fps: 24
+  clip_duration_sec: 5.0
+  num_clips: 8
+generation_defaults:
+  wan_profile: quality
+  steps: 60
+  guidance_scale: 5.0
+  sampler: dpmpp_2m
+  motion_strength: 0.7
+  motion_block: true
+  export_quality: 9
+  chain_last_frame: true
+  other: {}
+stitching:
+  enabled: true
+  mode: concat
+  crossfade_sec: 0
+  rife_boundary_smoothing:
+    enabled: false
+    boundary_sec: 0.0
+prompts:
+  global_prompt: '16:9 cinematic night city in heavy rain; rain-slick asphalt with
+    strong neon reflections; shallow depth of field with neon bokeh; steam vents and
+    light mist; realistic wet surfaces and specular highlights; consistent color palette:
+    teal, magenta, amber; soft filmic contrast; 35mm lens look; subtle handheld micro-shake
+    but mostly stabilized; natural motion with believable physics; no text anywhere;
+    no subtitles; no logos; no watermarks.
+
+    Identity lock: same main subject across all clips, a woman in her late 20s with
+    short black bob hair, light olive skin, small beauty mark under left eye, wearing
+    a bright yellow hooded raincoat, black slim pants, white sneakers, holding a clear
+    dome umbrella with a thin black handle; same outfit, same face, same umbrella;
+    same time of night and same rainy weather.'
+  negative_prompt: 'text, captions, subtitles, signage lettering that becomes readable,
+    watermarks, logos, UI overlays, credits, QR codes, posters with legible words;
+
+    extra limbs, extra fingers, fused hands, warped face, identity drift, age shift,
+    hairstyle change, outfit change, umbrella shape change;
+
+    flicker, jitter, temporal wobble, frame blending, ghosting trails, duplicated
+    subject, inconsistent reflections, melting buildings;
+
+    overexposed highlights, crushed blacks, muddy low-light noise, banding, compression
+    blocks, extreme motion blur, strobing.'
+  continuity_rules:
+  - Maintain the same subject identity (face, hair, raincoat, umbrella) and the same
+    wet neon street setting across all clips.
+  - "Each clip i>0 must begin exactly from the previous clip\u2019s last-frame composition;\
+    \ continue direction of movement and camera motion without teleporting."
+  - Keep the same night rain lighting and color palette (teal/magenta/amber) with
+    consistent lens look and depth of field; no readable text.
+inputs:
+  initial_images:
+  - assets/wan/idea01/ref_01.png
+  - assets/wan/idea01/ref_02.png
+shots:
+- index: 0
+  name: umbrella_walk_in
+  prompt: 'Subject: the woman in the yellow raincoat walks toward camera under a clear
+    umbrella, raindrops streaking and beading on the canopy.
+
+    Camera: slow push-in from medium-wide to medium, centered framing; slight stabilized
+    handheld micro-shake.
+
+    Environment/Light: neon-lit wet street with teal and magenta reflections; steam
+    drifting from a sidewalk vent on frame right; shallow DOF bokeh.
+
+    Continuity: match the reference subject exactly (same face, yellow raincoat, clear
+    umbrella), no text anywhere.
+
+
+    MOTION:
+
+    - Subject: steady forward walk under umbrella; slight shoulder sway; eyes tracking
+    forward
+
+    - Environment: rain sheets, droplets on umbrella, drifting steam from vent, shimmering
+    neon puddles
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: steady forward walk under umbrella; slight shoulder sway; eyes tracking
+    forward
+  motion_environment: rain sheets, droplets on umbrella, drifting steam from vent,
+    shimmering neon puddles
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 1
+  name: lateral_track_reflections
+  prompt: 'Subject: she continues walking past camera, turning her head slightly to
+    glance at a passing glow, umbrella tilts as wind gusts.
+
+    Camera: lateral tracking left-to-right alongside her at chest height, keeping
+    her in the left third; smooth continuous move.
+
+    Environment/Light: same street, rain-slick asphalt with strong neon reflections;
+    storefront lights stay abstract and unreadable; misty air.
+
+    Continuity: begin from prior last frame and keep the same subject identity, outfit,
+    umbrella, and night-rain palette.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 2
+  name: puddle_step_close
+  prompt: 'Subject: close on her lower body as she steps through a shallow puddle;
+    water splashes naturally and reflections ripple.
+
+    Camera: gentle tilt down into a low-angle close-up, then hold; minimal movement
+    to stabilize the detail.
+
+    Environment/Light: same wet pavement with teal/magenta highlights; raindrops pepper
+    the puddle surface; steam haze in background.
+
+    Continuity: same subject outfit (yellow raincoat hem visible, black pants, white
+    sneakers); continue seamlessly from previous last frame.
+
+
+    MOTION:
+
+    - Subject: natural footstep impact through puddle with subtle leg/coat motion
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: gentle tilt-down then hold; no rapid zoom; maintain stable framing'
+  motion_block: true
+  motion_subject: natural footstep impact through puddle with subtle leg/coat motion
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: gentle tilt-down then hold; no rapid zoom; maintain stable framing
+  motion_notes: ''
+- index: 3
+  name: steam_vent_pass
+  prompt: 'Subject: she walks through a thicker plume of steam; she raises her free
+    hand briefly to brush moisture from her cheek.
+
+    Camera: slow orbit a few degrees around her front-right side to front-left, staying
+    medium shot; smooth and controlled.
+
+    Environment/Light: same sidewalk vent emitting steam; neon bokeh blooms behind;
+    rain remains steady with visible streaks.
+
+    Continuity: start exactly where the last clip ended; keep the same face details,
+    hair bob, yellow raincoat, clear umbrella.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 4
+  name: train_light_sweep
+  prompt: 'Subject: she pauses for half a beat at the curb, then resumes walking as
+    a train passes off-screen; moving light sweeps across her raincoat and umbrella.
+
+    Camera: locked medium-wide with a subtle push-in; let the light change be the
+    micro-event.
+
+    Environment/Light: same location; reflected bands of amber/teal glide across wet
+    ground; rain and mist consistent; no readable signage.
+
+    Continuity: continue from the prior last frame; same subject identity and wardrobe,
+    same rainy neon street.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 5
+  name: silhouette_crowd_layer
+  prompt: 'Subject: she walks forward while a few background silhouettes with umbrellas
+    cross behind her, never blocking her face fully.
+
+    Camera: gentle dolly forward matching her pace, medium shot; keep her centered
+    and dominant.
+
+    Environment/Light: same street depth with layered bokeh; wet reflections stay
+    coherent; steam thinner now but still present; heavy rain.
+
+    Continuity: begin from previous last frame; preserve the same main subject appearance
+    and avoid any text or logos.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 6
+  name: neon_sign_glow_bokeh
+  prompt: 'Subject: she slows and looks up slightly as a bright neon glow intensifies;
+    raindrops sparkle on the umbrella surface.
+
+    Camera: slow push-in to a tighter medium close-up; shallow DOF emphasizing bokeh
+    and droplets.
+
+    Environment/Light: same night-rain scene; teal/magenta neon bokeh blooms large;
+    reflections remain stable and realistic.
+
+    Continuity: start from the last frame of clip 5; same face, beauty mark, hair
+    bob, yellow raincoat, clear umbrella, no text.
+
+
+    MOTION:
+
+    - Subject: subtle natural body movement; breathing; small head turns; micro-expressions
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered'
+  motion_block: true
+  motion_subject: subtle natural body movement; breathing; small head turns; micro-expressions
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow subtle dolly-in only; no rapid zoom; no sudden framing changes;
+    subject centered
+  motion_notes: ''
+- index: 7
+  name: walkaway_end_frame
+  prompt: 'Subject: she turns smoothly and walks away down the street, umbrella overhead;
+    her yellow raincoat becomes a bright anchor in the distance.
+
+    Camera: slow pull-back (or slow backward dolly) maintaining central composition;
+    keep motion stable and natural.
+
+    Environment/Light: same wet neon street receding into mist; steam and rain persist;
+    reflections trail behind her with consistent highlights.
+
+    Continuity: continue directly from prior last frame; maintain identical subject
+    identity and styling, and keep all signage unreadable with no text.
+
+
+    MOTION:
+
+    - Subject: smooth turn then walk-away with natural gait cadence
+
+    - Environment: rain streaks and droplets; neon reflections shimmering on wet asphalt;
+    steam drifting; light wind
+
+    - Camera: slow pull-back only; no sudden framing changes; centered composition'
+  motion_block: true
+  motion_subject: smooth turn then walk-away with natural gait cadence
+  motion_environment: rain streaks and droplets; neon reflections shimmering on wet
+    asphalt; steam drifting; light wind
+  motion_camera: slow pull-back only; no sudden framing changes; centered composition
+  motion_notes: ''

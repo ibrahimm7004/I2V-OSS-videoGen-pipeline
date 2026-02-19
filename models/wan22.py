@@ -101,6 +101,13 @@ class Wan22Adapter(ModelAdapter):
 
     def _import_runtime(self) -> tuple[Any, Any, Any]:
         try:
+            import ftfy  # type: ignore  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "WAN adapter requires 'ftfy'. Install it with: pip install ftfy"
+            ) from exc
+
+        try:
             import torch  # type: ignore
         except ImportError as exc:
             raise RuntimeError("WAN adapter requires torch. Install torch in this environment.") from exc

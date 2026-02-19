@@ -11,6 +11,17 @@ from pipeline.utils import load_structured_file
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_MODEL_IDS = {"wan22_ti2v_5b", "hunyuan_i2v", "cogvideox15_5b_i2v"}
 
+DEFAULT_MOTION_SUBJECT = (
+    "subtle natural body movement; breathing; small head turns; micro-expressions"
+)
+DEFAULT_MOTION_ENVIRONMENT = (
+    "rain streaks and droplets; neon reflections shimmering on wet asphalt; steam drifting; light wind"
+)
+DEFAULT_MOTION_CAMERA = (
+    "slow subtle dolly-in only; no rapid zoom; no sudden framing changes; subject centered"
+)
+DEFAULT_MOTION_NOTES = ""
+
 
 class HFCacheSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -48,6 +59,7 @@ class GenerationDefaults(BaseModel):
     steps: int = Field(gt=0)
     guidance_scale: float | int
     sampler: str
+    motion_block: bool | None = None
 
 
 class RifeSpec(BaseModel):
@@ -81,6 +93,15 @@ class ShotPack(BaseModel):
     index: int
     prompt: str
     name: str | None = None
+    steps: int | None = None
+    guidance_scale: float | int | None = None
+    motion_strength: float | int | None = None
+    cinematic_constraints: bool | None = None
+    motion_block: bool | None = None
+    motion_subject: str | None = None
+    motion_environment: str | None = None
+    motion_camera: str | None = None
+    motion_notes: str | None = None
 
 
 class JobPackSpec(BaseModel):
@@ -94,6 +115,37 @@ class JobPackSpec(BaseModel):
     prompts: PromptsSpec
     inputs: InputsSpec
     shots: list[ShotPack]
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _compose_motion_block_text(
+    *,
+    motion_subject: str,
+    motion_environment: str,
+    motion_camera: str,
+    motion_notes: str = "",
+) -> str:
+    lines = [
+        "MOTION:",
+        f"- Subject: {motion_subject}",
+        f"- Environment: {motion_environment}",
+        f"- Camera: {motion_camera}",
+    ]
+    if motion_notes.strip():
+        lines.append(f"- Notes: {motion_notes.strip()}")
+    return "\n".join(lines)
 
 
 def is_job_pack_payload(raw: Mapping[str, Any]) -> bool:
@@ -177,42 +229,102 @@ def convert_job_pack_to_runtime_job(
     source_job_path: Path | None = None,
 ) -> dict[str, Any]:
     generation_defaults = pack.generation_defaults.model_dump()
-    motion_strength = generation_defaults.get("motion_strength")
+    motion_strength_default = generation_defaults.get("motion_strength")
     export_quality = generation_defaults.get("export_quality")
     chain_last_frame = generation_defaults.get("chain_last_frame")
+    postprocess = generation_defaults.get("postprocess")
+    cinematic_constraints = generation_defaults.get("cinematic_constraints")
+    motion_block = generation_defaults.get("motion_block")
     wan_profile = (
         generation_defaults.get("wan_profile")
         or generation_defaults.get("run_profile")
         or generation_defaults.get("profile")
     )
+    guidance_default = generation_defaults.get("guidance_scale", pack.generation_defaults.guidance_scale)
+    steps_default = generation_defaults.get("steps", pack.generation_defaults.steps)
+    if wan_profile == "quality":
+        guidance_default = 5.0 if generation_defaults.get("guidance_scale") is None else guidance_default
+        steps_default = 60 if generation_defaults.get("steps") is None else steps_default
+        if motion_strength_default is None:
+            motion_strength_default = 0.70
+        if cinematic_constraints is None:
+            cinematic_constraints = True
+        if motion_block is None:
+            motion_block = True
+    elif wan_profile == "smoke":
+        if cinematic_constraints is None:
+            cinematic_constraints = False
+        if motion_block is None:
+            motion_block = False
 
     fps = pack.video.fps if not fast_mode else max(1, min(4, pack.video.fps))
     duration = pack.video.clip_duration_sec if not fast_mode else min(pack.video.clip_duration_sec, 0.5)
     frames = max(1, int(round(duration * fps)))
-    steps = int(pack.generation_defaults.steps) if not fast_mode else min(8, int(pack.generation_defaults.steps))
+    steps = int(steps_default) if not fast_mode else min(8, int(steps_default))
     width = int(pack.video.width) if not fast_mode else min(512, int(pack.video.width))
     height = int(pack.video.height) if not fast_mode else min(512, int(pack.video.height))
 
     shots: list[dict[str, Any]] = []
     for idx, shot in enumerate(pack.shots):
+        shot_data = shot.model_dump()
+        shot_guidance_raw = shot_data.get("guidance_scale")
+        shot_guidance = guidance_default if shot_guidance_raw is None else shot_guidance_raw
+        shot_motion_raw = shot_data.get("motion_strength")
+        shot_motion = motion_strength_default if shot_motion_raw is None else shot_motion_raw
+        shot_steps_raw = shot_data.get("steps")
+        shot_steps = int(steps if shot_steps_raw is None else shot_steps_raw)
+        if fast_mode:
+            shot_steps = min(8, shot_steps)
+        shot_cinematic_constraints = shot_data.get("cinematic_constraints")
+        shot_motion_block = shot_data.get("motion_block")
+        motion_block_enabled = _coerce_bool(
+            shot_motion_block if shot_motion_block is not None else motion_block,
+            False,
+        )
+        shot_motion_subject = str(shot_data.get("motion_subject") or DEFAULT_MOTION_SUBJECT).strip()
+        shot_motion_environment = str(shot_data.get("motion_environment") or DEFAULT_MOTION_ENVIRONMENT).strip()
+        shot_motion_camera = str(shot_data.get("motion_camera") or DEFAULT_MOTION_CAMERA).strip()
+        shot_motion_notes = str(shot_data.get("motion_notes") or DEFAULT_MOTION_NOTES).strip()
+        motion_block_text = _compose_motion_block_text(
+            motion_subject=shot_motion_subject,
+            motion_environment=shot_motion_environment,
+            motion_camera=shot_motion_camera,
+            motion_notes=shot_motion_notes,
+        )
+        shot_params = shot_data.get("params")
+        if not isinstance(shot_params, dict):
+            shot_params = {}
         seed_offset = pack.run.seed_strategy.per_clip_offsets[idx]
         shots.append(
             {
                 "prompt": shot.prompt,
                 "negative_prompt": pack.prompts.negative_prompt,
                 "duration_seconds": duration,
-                "steps": steps,
+                "steps": shot_steps,
                 "fps": fps,
                 "frames": frames,
                 "seed": int(pack.run.seed_strategy.base_seed + seed_offset),
                 "width": width,
                 "height": height,
                 "params": {
-                    "cfg": pack.generation_defaults.guidance_scale,
+                    "cfg": shot_guidance,
+                    "guidance_scale": shot_guidance,
                     "sampler": pack.generation_defaults.sampler,
-                    **({"motion_strength": motion_strength} if motion_strength is not None else {}),
+                    **({"motion_strength": shot_motion} if shot_motion is not None else {}),
                     **({"export_quality": export_quality} if export_quality is not None else {}),
                     **({"wan_profile": wan_profile} if wan_profile is not None else {}),
+                    **(
+                        {"cinematic_constraints": _coerce_bool(shot_cinematic_constraints, True)}
+                        if shot_cinematic_constraints is not None
+                        else {}
+                    ),
+                    "motion_block": bool(motion_block_enabled),
+                    "motion_subject": shot_motion_subject,
+                    "motion_environment": shot_motion_environment,
+                    "motion_camera": shot_motion_camera,
+                    "motion_notes": shot_motion_notes,
+                    "motion_block_text": motion_block_text,
+                    **shot_params,
                 },
             }
         )
@@ -229,16 +341,29 @@ def convert_job_pack_to_runtime_job(
         "output_root": output_root_override or pack.run.output_dir,
         "dry_run": dry_run,
         "global_params": {
-            "cfg": pack.generation_defaults.guidance_scale,
+            "cfg": guidance_default,
+            "guidance_scale": guidance_default,
             "sampler": pack.generation_defaults.sampler,
-            **({"motion_strength": motion_strength} if motion_strength is not None else {}),
+            **({"motion_strength": motion_strength_default} if motion_strength_default is not None else {}),
             **({"export_quality": export_quality} if export_quality is not None else {}),
             **({"chain_last_frame": bool(chain_last_frame)} if chain_last_frame is not None else {}),
+            **({"postprocess": postprocess} if isinstance(postprocess, dict) else {}),
             **({"wan_profile": wan_profile} if wan_profile is not None else {}),
+            **({"motion_block": _coerce_bool(motion_block, False)} if motion_block is not None else {}),
         },
         "constants": {
             "global_prompt": pack.prompts.global_prompt,
             "continuity_rules": pack.prompts.continuity_rules,
+            **(
+                {"cinematic_constraints_enabled": _coerce_bool(cinematic_constraints, True)}
+                if cinematic_constraints is not None
+                else {}
+            ),
+            **(
+                {"motion_block_enabled": _coerce_bool(motion_block, False)}
+                if motion_block is not None
+                else {}
+            ),
         },
         "input_image": input_image,
         "shots": shots,

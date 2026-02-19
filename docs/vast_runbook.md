@@ -1,115 +1,98 @@
 # Vast.ai Runbook
 
-This runbook is for unattended runs on a Vast.ai Linux instance, with control and downloads from a local Windows PC.
+Automated WAN run workflow for fresh Vast Ubuntu instances.
 
-## 1) SSH into instance
+## Quick start (one command chain)
 
 ```bash
 ssh -i /path/to/key root@<INSTANCE_IP>
-```
-
-## 2) Clone repo and bootstrap
-
-```bash
-git clone <YOUR_REPO_URL>
+cd /workspace
+git clone <YOUR_REPO_URL> I2V-OSS-videoGen-pipeline
 cd I2V-OSS-videoGen-pipeline
-bash scripts/vast_bootstrap.sh
-source .venv/bin/activate
+bash scripts/vast/run_all_steps.sh --repo-url <YOUR_REPO_URL> --prefetch-wan
 ```
 
-## 3) Set Hugging Face cache to persistent storage
+This runs:
+- `scripts/vast/00_check_instance.sh`
+- `scripts/vast/01_setup_env.sh`
+- `scripts/vast/02_smoke_and_preflight.sh`
+- `scripts/vast/03_run_wan.sh`
 
-Example using `/workspace`:
+## Manual step-by-step
+
+### 1) Instance check
 
 ```bash
-export HF_HOME="/workspace/.cache/huggingface"
-export HF_HUB_CACHE="/workspace/hf-cache"
-mkdir -p "$HF_HOME" "$HF_HUB_CACHE"
+bash scripts/vast/00_check_instance.sh --min-free-gb 60
 ```
 
-Set token if required by model repos:
+### 2) Setup env and cache
 
 ```bash
-export HF_TOKEN="hf_xxx"
+bash scripts/vast/01_setup_env.sh --repo-url <YOUR_REPO_URL> --prefetch-wan
+source /workspace/I2V_ENV.sh
 ```
 
-## 4) Prefetch weights (download-only)
-
-Dry run:
+### 3) Preflight and optional smoke
 
 ```bash
-python scripts/prefetch.py --models all --dry-run
+bash scripts/vast/02_smoke_and_preflight.sh --job jobs/wan/idea01.yaml
 ```
 
-Smoke prefetch (20 seconds):
+Optional 1-clip smoke run:
 
 ```bash
-python scripts/prefetch.py --models all --smoke --smoke-seconds 20
+bash scripts/vast/02_smoke_and_preflight.sh --job jobs/wan/idea01.yaml --run-smoke --smoke-num-clips 1 --smoke-duration-sec 2 --smoke-steps 12
 ```
 
-Full prefetch:
+### 4) Launch full WAN run in tmux
 
 ```bash
-python scripts/prefetch.py --models all
+bash scripts/vast/03_run_wan.sh --job jobs/wan/idea01.yaml
 ```
 
-## 5) Run jobs
-
-Single job:
+Optional runtime overrides (without editing YAML):
 
 ```bash
-python -m scripts.run_job --job jobs/example_wan.yaml --out outputs
+bash scripts/vast/03_run_wan.sh --job jobs/wan/idea01.yaml --num-clips 8 --clip-duration-sec 5 --run-id wan-main-001
 ```
 
-Unattended all-jobs sequence:
+## Runtime environment used by scripts
+
+The scripts export and use:
 
 ```bash
-python scripts/run_all.py --out outputs
+export HF_HOME=/workspace/hf_cache
+export HF_HUB_CACHE=/workspace/hf_cache
+export WAN22_REPO_ID=Wan-AI/Wan2.2-TI2V-5B-Diffusers
+export WAN22_EXPORT_QUALITY=9
+export POST_CLIP_VALIDATION_ENABLED=true
+export POST_CLIP_MIN_FRAME_DIFF=0.003
 ```
 
-Remote helper with stdout log:
+## Monitor and download from local Windows PC
 
-```bash
-bash scripts/remote_run.sh
-```
-
-## 6) Control running jobs (pause/resume/stop)
-
-From local machine (print SSH command only):
-
-```powershell
-python scripts\control_run.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pause
-```
-
-Execute immediately:
-
-```powershell
-python scripts\control_run.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --stop --execute
-```
-
-## 7) Monitor from local PC
+Watch run status:
 
 ```powershell
 python scripts\watch_status.py --host <INSTANCE_IP> --user root --key C:\keys\vast.pem --remote-path /workspace/I2V-OSS-videoGen-pipeline/outputs --run-id <run_id> --pretty --tail-progress --tail-stdout
 ```
 
-## 8) Download bundle(s) to local PC
-
-Single run:
+Download bundle after `bundle_ready`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\download_bundle.ps1 -HostName <INSTANCE_IP> -User root -KeyPath C:\keys\vast.pem -RemoteOutputsPath /workspace/I2V-OSS-videoGen-pipeline/outputs -RunId <run_id> -LocalDir C:\downloads\i2v
 ```
 
-Watch and auto-download on completion:
+Auto-watch + download:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\watch_and_download.ps1 -HostName <INSTANCE_IP> -User root -KeyPath C:\keys\vast.pem -RemoteOutputsPath /workspace/I2V-OSS-videoGen-pipeline/outputs -RunId <run_id> -LocalDir C:\downloads\i2v
 ```
 
-## 9) Cleanup
+## Cleanup and billing reminder
 
-Delete one run directory:
+Delete run files:
 
 ```bash
 bash scripts/cleanup_run.sh --run-id <run_id>
@@ -121,8 +104,4 @@ Delete run + cache (dangerous):
 bash scripts/cleanup_run.sh --run-id <run_id> --delete-cache --cache-path /workspace/hf-cache
 ```
 
-## 10) Billing warning
-
-- Deleting files reduces storage usage.
-- Deleting files **does not stop instance billing**.
-- To stop charges, you must stop/destroy the instance in Vast UI/CLI.
+Deleting files does not stop billing. Stop or destroy the instance in Vast UI/CLI to stop charges.

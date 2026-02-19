@@ -59,18 +59,18 @@ shots:
   - index: 0
     name: "umbrella_walk_in"
     prompt: |-
-      Subject: the woman in the yellow raincoat walks toward camera under a clear umbrella, raindrops streaking and beading on the canopy.
-      Camera: slow push-in from medium-wide to medium, centered framing; slight stabilized handheld micro-shake.
-      Environment/Light: neon-lit wet street with teal and magenta reflections; steam drifting from a sidewalk vent on frame right; shallow DOF bokeh.
-      Continuity: match the reference subject exactly (same face, yellow raincoat, clear umbrella), no text anywhere.
+      Subject: the woman in the yellow raincoat walks toward camera under a clear umbrella; calm expression, subtle breathing and micro-expressions.
+      Camera: slow subtle dolly-in only; medium-wide to medium; centered framing; no rapid zoom; no sudden framing changes.
+      Environment/Light: heavy rain; raindrops bead and streak on the umbrella canopy; neon teal and magenta reflections shimmer on wet asphalt; steam drifts from a sidewalk vent on frame right; shallow DOF bokeh.
+      Continuity: match the reference subject exactly; same face, yellow raincoat, clear umbrella; no text, no logos.
 
   - index: 1
     name: "lateral_track_reflections"
     prompt: |-
-      Subject: she continues walking past camera, turning her head slightly to glance at a passing glow, umbrella tilts as wind gusts.
-      Camera: lateral tracking left-to-right alongside her at chest height, keeping her in the left third; smooth continuous move.
-      Environment/Light: same street, rain-slick asphalt with strong neon reflections; storefront lights stay abstract and unreadable; misty air.
-      Continuity: begin from prior last frame and keep the same subject identity, outfit, umbrella, and night-rain palette.
+      Subject: she walks past camera and slightly ahead; she turns her head briefly toward a passing neon glow; umbrella tilts subtly with a light wind gust.
+      Camera: smooth follow move at chest height; slight lateral drift left-to-right while keeping her mostly in frame; no sudden framing changes; no rapid zoom.
+      Environment/Light: rain-slick street; strong teal and magenta reflections ripple across the asphalt; storefront lights stay abstract and unreadable; misty air and drifting steam.
+      Continuity: begin from prior last frame; preserve face identity, outfit, umbrella, and night-rain palette; no text, no logos.
 
   - index: 2
     name: "puddle_step_close"
